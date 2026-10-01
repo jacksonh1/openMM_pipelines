@@ -1,0 +1,45 @@
+# openmm_pipelines — sync ignore (rsync --exclude-from)
+# Keep code, configs, and small inputs; drop bulky MD outputs and scratch.
+
+# ── MD simulation outputs / scratch dirs ────────────────────────────────
+archive/
+temp/
+
+# ── Trajectory / coordinate / checkpoint files (large binaries) ─────────
+*.dcd
+*.xtc
+*.trr
+*.nc
+*.h5
+*.chk
+*.rst
+*.rst7
+*.restart
+*.out
+
+# ── Serialized / archive blobs ──────────────────────────────────────────
+*.pickle
+*.pkl
+*.npz
+*.npy
+*.tar.gz
+
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# ── OS / Syncthing / IDE / local-only ───────────────────────────────────
+.DS_Store
+._*
+~$*
+.stignore
+.stfolder/
+.vscode/
+pyrightconfig.json
+
+# CodeGraph — machine-local index (SQLite) + cluster-specific MCP wiring; never sync
+.codegraph/
+.mcp.json
