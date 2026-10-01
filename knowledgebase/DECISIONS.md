@@ -307,19 +307,26 @@ not *wrong*, so it warns rather than blocks.
 
 ## 2026-10-01 — nonbonded settings are properties of the force field
 
-**Decision.** `NonbondedSpec(cutoff_nm, switch_nm, validated)` is a property of each
-`ProteinFF` member. All nonbonded settings flow through `createSystem` kwargs;
-nothing is special-cased by FF name or read back off the built System. The `match`
-in `nonbonded` has no default — a new FF member with no spec fails loudly
+**Decision.** `NonbondedSpec(cutoff_nm, switch_nm)` is a property of each `ProteinFF`
+member. All nonbonded settings flow through `createSystem` kwargs; nothing is
+special-cased by FF name or read back off the built System. The `match` in
+`nonbonded` has no default — a new FF member with no spec fails loudly
 (exhaustiveness).
 
-**Why.** OpenMM applies the kwargs correctly whether the FF uses a `NonbondedForce`
-(AMBER) or a `CustomNonbondedForce` (CHARMM, force-switched vdW at 1.2/1.0 nm). No
-force introspection = no FF-family branching in `build.py`.
+**Why this file must exist (verified against OpenMM docs, 2026-10-01).** OpenMM does
+**not** pick nonbonded settings from the force field: `createSystem` defaults to a
+1.0 nm cutoff and *no* switch, and loading `charmm36.xml` does not auto-apply CHARMM's
+force-switch. But CHARMM's LJ params were parameterized *with* a 10–12 Å force-switch,
+so a plain cutoff with CHARMM is a silent correctness error. Making cutoff+switch a
+property of the `ProteinFF` enum means you cannot select CHARMM and forget its switch
+(fail-loud / make-illegal-states-unrepresentable). The kwargs apply correctly whether
+the FF uses a `NonbondedForce` (AMBER) or a `CustomNonbondedForce` (CHARMM) — no force
+introspection, no FF-family branching in `build.py`.
 
-**The `validated` flag** is the structural hook for the CHARMM caution: set it
-`False` for any FF whose nonbonded handling has not been energy-matched, and config
-validation refuses it until checked. AMBER needs no such check.
+**Removed the `validated` flag (was in the first draft).** It was a bool that was
+always `True`, gating a config assertion for an energy-match check never performed —
+speculative machinery (YAGNI). Cut it and its config assert. The CHARMM energy-match
+remains a **manual recommendation** (science-review flag #4), not a code gate.
 
 ---
 
@@ -402,7 +409,8 @@ OpenMM 8.6.
 3. **`protein_heavy_atoms` selection.** Protein heavy atoms only, no H, no
    solvent/ions; assert non-empty.
 4. **CHARMM energy-match.** Energy-match a known system before trusting a CHARMM run
-   (the `validated` gate). AMBER needs no such check.
+   (manual recommendation — no longer a code gate; the `validated` flag was removed).
+   AMBER needs no such check.
 5. **REST2 force-field safety (future).** CMAP-bearing FFs (CHARMM, ff19SB) are not
    safely solute-scalable without handling the cross-term; gate REST2 behind the
    check.

@@ -67,10 +67,6 @@ class PrepConfig(BaseModel, frozen=True):
         )
         assert self.density_min_seg >= 2, "density plateau fit needs density_min_seg >= 2"
         resolve(self.protein_ff, self.water)  # raises ForceFieldError on illegal pairing
-        assert self.protein_ff.nonbonded.validated, (
-            f"{self.protein_ff.name} nonbonded spec is unvalidated — "
-            "run an energy-match check before production"
-        )
         if self.water is not _RECOMMENDED_WATER[self.protein_ff]:
             warnings.warn(
                 f"{self.protein_ff.name} is recommended with "

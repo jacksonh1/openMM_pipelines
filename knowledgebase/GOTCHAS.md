@@ -89,6 +89,33 @@ decision in `DECISIONS.md`.
 
 ---
 
+## CHARMM nonbonded: OpenMM's switch is a POTENTIAL switch, not CHARMM's force-switch
+
+**Trigger.** Running a CHARMM force field in OpenMM and trusting the energetics for a
+large/long campaign.
+
+**What's subtle (and could silently waste compute).** OpenMM does NOT pick nonbonded
+settings from the FF — `createSystem` defaults to a 1.0 nm cutoff and *no* switch
+([docs](https://docs.openmm.org/latest/userguide/application/02_running_sims.html)).
+We set CHARMM to `1.2 nm cutoff / 1.0 nm switch / PME / HBonds`, which matches the
+canonical ParmEd CHARMM/OpenMM example (12 Å / 10 Å). BUT CHARMM was parameterized
+with **force-switching** (vfswitch), while OpenMM's built-in `NonbondedForce`
+`switchDistance` applies a **potential switch** (multiplies the LJ energy by
+`S = 1−6x⁵+15x⁴−10x³`) — a *different* function that leaves a small force "bump"
+between switch and cutoff. OpenMM's built-in force cannot do force-switch; CHARMM-GUI
+achieves the exact form via a `CustomNonbondedForce`.
+
+**Fix / safeguard.** The 1.2/1.0 potential-switch is the standard documented
+approximation and is fine for conformational stability/drift MD. For *exact* CHARMM
+energetics, implement the CHARMM-GUI force-switch (`CustomNonbondedForce`) — out of
+current scope. Either way, the real protection against a wrong setting is a **one-time
+single-point energy match** vs a reference
+([choderalab/OpenMMEnergyComparisons](https://github.com/choderalab/OpenMMEnergyComparisons))
+before committing a production campaign. AMBER (1.0 nm, no switch, PME) needs no such
+caution. See `DECISIONS.md` (nonbonded settings) and TODO (energy-match tool).
+
+---
+
 ## CHARMM36 != CHARMM36M
 
 **Trigger.** Picking a CHARMM protein force field.

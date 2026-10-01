@@ -84,9 +84,14 @@ openmm_pipelines/
     config.py              #   REST2Config(PrepConfig)
     production.py          #   run(eq, cfg) -> Path  (multistate + solute scaling; CMAP gate)
 
-  analysis/                # mdtraj-based, in-package  [soon]
-    trajectory.py / metrics.py / dssp.py / clustering.py / plots.py
-    remd.py                #   exchange acceptance, round-trip mixing (reads .nc)
+  analysis/                # mdtraj-based, in-package  [BUILT]
+    __init__.py            #   analyze(outdir) composer + re-exports
+    trajectory.py          #   load (cif topo via openmm) + image_molecules + strip + superpose to input
+    metrics.py             #   rmsd_to_reference / radius_of_gyration / rmsf_per_residue (Å)
+    dssp.py                #   secondary_structure, ss_fractions (mdtraj compute_dssp)
+    clustering.py          #   pairwise_rmsd + cluster_conformations (scipy hierarchical)
+    plots.py               #   rmsd / rg / rmsf / dssp PNGs (matplotlib Agg)
+    remd.py                #   [SOON] exchange acceptance, round-trip mixing (reads .nc)
 tests/
   test_forcefield.py (10) · test_config.py (13) · test_density.py (10)   [BUILT, pass]
   test_restraints.py (6) · test_build.py (7) · test_equilibration.py (5, slow) [BUILT, pass]

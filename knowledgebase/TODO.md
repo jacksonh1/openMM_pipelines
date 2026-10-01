@@ -27,14 +27,20 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [ ] `core/prepare.py` — shared pipeline; `protein_heavy_atoms` selection (assert non-empty); writes topology.
 - [ ] `md/config.py` — `MDConfig(PrepConfig)`.
 - [ ] `md/production.py` — `run(eq, cfg)`; XTC/StateData/Checkpoint reporters; `export_final_pdb`.
-- [ ] `analysis/` — `trajectory` (load + PBC image + strip + align), `metrics`, `dssp`, `clustering`, `plots`.
+- [x] `analysis/` — `trajectory` (load + PBC image + strip + superpose to input), `metrics` (RMSD/Rg/RMSF, Å), `dssp`, `clustering` (scipy), `plots`, `analyze(outdir)` composer. Validated on demo_out (5 synthetic + 1 smoke test). (2026-10-01)
 - [ ] `__init__.py` top-level + `core/`/`md/` re-exports; `README.md` usage.
 
 ## Science-review items to resolve before trusting production
 
 - [ ] Restraint `x0` (absolute) vs MC barostat COM rescaling — confirm benign.
-- [ ] PBC wrap on trajectory + final PDB export (`mdtraj image_molecules`).
-- [ ] CHARMM energy-match before flipping any CHARMM `NonbondedSpec.validated`.
+- [x] PBC wrap on trajectory (`image_molecules` in analysis). Final-structure wrap still TBD.
+- [ ] **Force-field energy-match validation tool** (deferred — decided 2026-10-01). A real, runnable per-force-group energy check to run once per FF before a big campaign; replaces the removed fake `validated` bool. Decisions reached:
+  - **AMBER (the default) is low-risk** — standard, switch-free, well-trodden; no validation needed. CHARMM is the one to check.
+  - **The real risk is GROSS errors** (missing/wrong switch, cutoff, method, FF file), not the subtle potential-switch-vs-force-switch delta (small, widely-accepted approximation; matters for free-energy, not stability/drift MD).
+  - **Preferred no-install design (tier 1):** fully-local, OpenMM-only — build one `ForceField('charmm36*.xml')` system and compare per-force-group energies under our built-in *potential*-switch vs a `CustomNonbondedForce` *force*-switch (CHARMM-GUI's published formula). Turns the switch question into a kJ/mol number, no CHARMM/GROMACS install. Likely `scripts/validate_charmm_switch.py`.
+  - **Tier 2 (gross-error cross-check):** `ForceField(xml)` route vs `CharmmPsfFile`+`CharmmParameterSet` route, both in OpenMM (needs a `.psf` from CHARMM-GUI web / VMD psfgen, not the CHARMM program).
+  - NOTE: choderalab/OpenMMEnergyComparisons ships *code to generate* benchmarks, not cached reference energies — it requires installing the other engines, so it is NOT a no-install path.
+  - Docs: method https://docs.openmm.org/latest/userguide/library/07_testing_validation.html ; per-force-group how-to https://openmm.github.io/openmm-cookbook/dev/notebooks/analysis_inspection/Analyzing%20Energy%20Contributions.html ; `parmed.openmm.energy_decomposition` https://parmed.github.io/ParmEd/html/openmmobj/parmed.openmm.energy_decomposition.html
 
 ## Open design decisions
 

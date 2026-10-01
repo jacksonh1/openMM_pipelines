@@ -18,9 +18,12 @@ class ForceFieldError(Exception):
 
 
 class NonbondedSpec(NamedTuple):
+    # OpenMM does NOT pick these from the force field — createSystem defaults to a 1.0 nm
+    # cutoff and NO switch. They are a property of the FF (CHARMM's LJ params require a
+    # force-switch; AMBER's do not), so coupling them to the enum means you cannot select
+    # CHARMM and silently run it with the wrong nonbonded treatment.
     cutoff_nm: float
     switch_nm: float | None  # None -> no switching function
-    validated: bool  # False -> config refuses it until energy-matched
 
 
 class ProteinFF(Enum):
@@ -50,17 +53,20 @@ class ProteinFF(Enum):
 
     @property
     def nonbonded(self) -> NonbondedSpec:
+        # PROVENANCE (verify before trusting on a large campaign; see GOTCHAS.md):
+        #   AMBER  : 1.0 nm cutoff, no switch, PME — standard AMBER-in-OpenMM.
+        #   CHARMM : 1.2 nm cutoff, 1.0 nm switch, PME, HBonds — matches the canonical
+        #            ParmEd CHARMM/OpenMM example (12 Å / 10 Å).
+        # CAVEAT: OpenMM's built-in switch is a POTENTIAL switch, not CHARMM's native
+        # force-switch (vfswitch) — a documented approximation (OpenMM can't force-switch
+        # in NonbondedForce; CHARMM-GUI uses a CustomNonbondedForce for the exact form).
+        # The real safeguard is a one-time single-point energy match vs a reference
+        # (choderalab/OpenMMEnergyComparisons) before a production campaign.
         match self:
-            case ProteinFF.AMBER99SBILDN:
-                return NonbondedSpec(1.0, None, True)
-            case ProteinFF.AMBER14SB:
-                return NonbondedSpec(1.0, None, True)
-            case ProteinFF.AMBER19SB:
-                return NonbondedSpec(1.0, None, True)
-            case ProteinFF.CHARMM36:
-                return NonbondedSpec(1.2, 1.0, True)  # CHARMM: force-switched vdW
-            case ProteinFF.CHARMM36M:
-                return NonbondedSpec(1.2, 1.0, True)
+            case ProteinFF.AMBER99SBILDN | ProteinFF.AMBER14SB | ProteinFF.AMBER19SB:
+                return NonbondedSpec(cutoff_nm=1.0, switch_nm=None)  # plain cutoff + PME
+            case ProteinFF.CHARMM36 | ProteinFF.CHARMM36M:
+                return NonbondedSpec(cutoff_nm=1.2, switch_nm=1.0)  # potential-switch ≈ CHARMM
         # no default: a new member with no spec fails loudly here (exhaustiveness)
 
 

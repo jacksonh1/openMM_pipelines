@@ -4,7 +4,7 @@ of the full pipeline, not a scientific run."""
 
 from pathlib import Path
 
-from openmm_pipelines import MDConfig, ProteinFF, WaterModel, md, prepare
+from openmm_pipelines import MDConfig, ProteinFF, WaterModel, analysis, md, prepare
 
 HERE = Path(__file__).parent
 STRUCT = HERE / "input_structures" / "helix_fusion.pdb"
@@ -29,18 +29,18 @@ def main() -> None:
     )
 
     eq = prepare(cfg)
-    prod = md.run(eq, cfg)
+    md.run(eq, cfg)
+    analysis.analyze(cfg.outdir)
 
     print(f"\n=== outputs in {cfg.outdir} ===")
     for rel in (
         "run_info.json",
         "prepared/prep_report.json",
         "production/run_report.json",
+        "analysis/analysis_report.json",
     ):
         print(f"\n----- {rel} -----")
         print((cfg.outdir / rel).read_text())
-    print(f"\nproduction dir: {prod}")
-    print("files:", sorted(p.name for p in prod.iterdir()))
 
 
 if __name__ == "__main__":

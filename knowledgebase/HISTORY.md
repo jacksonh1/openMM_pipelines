@@ -117,3 +117,22 @@ Reworked the module layout with the user into four tiers (see `DECISIONS.md`):
 - Open: `analysis/` (trajectory load + PBC image + RMSD/Rg/RMSF/DSSP vs input pose);
   output contract refinement; then REMD/REST2 backends. `relax`→per-replica
   equilibration still noted for REMD.
+
+### analysis/ subpackage built (later, 2026-10-01)
+
+- Built `analysis/`: `trajectory` (load xtc with cif topology parsed via OpenMM
+  `PDBxFile` → `md.Topology.from_openmm`, since mdtraj's cif reader is unreliable;
+  `image_molecules` → strip to protein → superpose onto the input pose), `metrics`
+  (RMSD-to-design, Rg, per-residue RMSF, all in Å — RMSD maps Cα across the two
+  topologies via `ref_atom_indices`; RMSF is about the trajectory mean, no external
+  ref), `dssp` (mdtraj native `compute_dssp`, no mkdssp), `clustering` (scipy
+  average-linkage on pairwise Cα RMSD), `plots` (matplotlib Agg PNGs), and an
+  `analyze(outdir)` composer writing `outdir/analysis/` (report JSON + npz + 4 PNGs).
+- Added **matplotlib** (+ confirmed pandas) to `environment.yml` and `pyproject.toml`;
+  installed matplotlib-base via conda-forge.
+- Validated `analyze()` on the demo output (helix_fusion, 20 ps, 43 res): **79.5%
+  helix**, RMSD-to-design mean 0.73 Å / max 1.17 Å, Rg 10.6 Å, peak RMSF at residue
+  26, 1 cluster — all sane. Tests: `test_analysis` (5 synthetic + 1 guarded demo
+  smoke). **50 non-slow tests pass.** Wired `analyze()` into the demo driver.
+- Open: output-contract refinement; REMD/REST2 backends (+ `analysis/remd.py` for
+  exchange/round-trip metrics).

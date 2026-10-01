@@ -5,7 +5,7 @@ cfg)`` produces. One-shot: ``md.run(prepare(cfg), cfg)``. T-REMD / REST2 are fut
 backends behind the same prepare/produce seam.
 """
 
-from . import md
+from . import analysis, md
 from .config import BoxShape, PrepConfig
 from .forcefield import ForceFieldError, NonbondedSpec, ProteinFF, WaterModel, resolve
 from .md.config import MDConfig
@@ -23,4 +23,5 @@ __all__ = [
     "prepare",
     "EquilibratedSystem",
     "md",
+    "analysis",
 ]
