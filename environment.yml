@@ -1,0 +1,33 @@
+name: openmm_env
+channels:
+  - conda-forge
+  - omnia
+  - bioconda
+dependencies:
+  # ── Python ──────────────────────────────────────────────────────────
+  - python=3.12
+  - pip
+  # ── OpenMM MD engine + ecosystem ────────────────────────────────────
+  - openmm=8.6
+  - openmmtools=0.26
+  - pdbfixer=1.12
+  - parmed=4.3
+  - mdtraj=1.11
+  # ── Free-energy / replica-exchange analysis ─────────────────────────
+  - pymbar=4.2
+  - mpiplus
+  # ── MPI (multi-replica T-REMD / REST2) ──────────────────────────────
+  - openmpi=5.0
+  - mpi4py=4.1
+  # ── GPU ─────────────────────────────────────────────────────────────
+  - cuda-version=12.9
+  # ── Scientific stack ────────────────────────────────────────────────
+  - numpy
+  - scipy
+  - pandas
+  - numba
+  - netcdf4
+  - pytables
+  - pyyaml
+  - pip:
+    - -e .

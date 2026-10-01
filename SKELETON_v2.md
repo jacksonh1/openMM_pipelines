@@ -1,38 +1,40 @@
 # openmm_pipelines — engine skeleton (design sketch)
 
-Status: **design sketch, not yet implemented.** This file records the intended shape of
-the engine so implementation can start from an agreed plan. No `.py` files exist yet.
+Status: **design sketch, not yet implemented.** This file records the intended shape of the
+engine so implementation can start from an agreed plan. No `.py` files exist yet.
 
 ## What this is
 
-A small, Pythonic openMM engine that ports the **general science flow** of the existing
-GROMACS plain-MD pipeline (`RELE_simulations/gromacs_REMD/scripts/simulation/MD-gromacs.sbatch`),
-using **openMM conventions** rather than mirroring the GROMACS engine. It is a `tools/`
-library — same tier as `snekwrap` and `FragForge` — consumed by campaigns and projects
-(e.g. `Ellen_WW_simulations`, XBL bound-state sampling) via `import openmm_md`.
+A small, Pythonic openMM engine for **explicit-solvent protein MD**. Given a folded or designed
+input structure (a PDB), it runs the standard flow — structure preparation + solvation, energy
+minimization, equilibration (NVT then NPT density), and production — and the analysis measures how
+far the structure drifts from the **input pose**, which is the reference (RMSD = drift from input,
+RMSF = local flexibility). It serves stability characterization, flexible-region identification,
+design-variant comparison, and bound-complex ensemble sampling.
 
-Scope now: **plain production MD.** But the whole design is organized around one seam so
-that **T-REMD and REST2 can be added later without reworking any of the shared code.**
-See "Architecture: the prepare/produce seam" and "Extending to REMD/REST2" below.
-(`tools/openmm_enh_samp/` is an older stub for the broader scope and is expected to be
-retired; this package is the foundation those engines would import.)
+It is a `tools/` library — same tier as `snekwrap` and `FragForge` — imported by campaigns and
+projects (e.g. `Ellen_WW_simulations`, XBL bound-state sampling) via `import openmm_pipelines`.
 
-Design rules inherited from the workspace: **fail loudly** (crash on violated assumptions,
-no silent fallbacks), **make illegal states unrepresentable**, **simple single-purpose
-primitives composed into behavior**.
+Scope now: **plain production MD.** The design is organized around one seam so that **T-REMD and
+REST2 can be added later without reworking any of the shared code** (see "The prepare/produce
+seam" and "Extending to REMD/REST2"). A separate `tools/openmm_enh_samp/` stub predates this and is
+expected to be retired; this package is the foundation the replica-exchange engines import.
 
-## Architecture: the prepare/produce seam
+Design rules (workspace conventions): **fail loudly** (crash on violated assumptions, no silent
+fallbacks), **make illegal states unrepresentable**, **compose simple single-purpose primitives**.
+
+## The prepare/produce seam
 
 Everything up to production is **identical across MD, T-REMD and REST2**: build the solvated
-system, restrain, minimize, NVT-equilibrate, density-equilibrate at the reference (lowest)
-temperature, release restraints. Only **production** differs:
+system, restrain, minimize, equilibrate NVT, equilibrate NPT density at the reference temperature,
+release restraints. Only **production** differs:
 
 - **plain MD** — one trajectory via `app.Simulation.step()`.
-- **T-REMD / REST2** — many replicas via an `openmmtools.multistate` sampler, which drives its
-  own `Context`s from `ThermodynamicState` + `SamplerState` objects. It does **not** use
+- **T-REMD / REST2** — many replicas via an `openmmtools.multistate` sampler, which drives its own
+  `Context`s from `ThermodynamicState` + `SamplerState` objects. It does **not** use
   `app.Simulation`.
 
-So the engine is split at that seam:
+So the engine splits at that seam:
 
 ```
 prepare(cfg) ---------------------------> EquilibratedSystem      (SHARED — ~90% of the code)
@@ -45,33 +47,38 @@ prepare(cfg) ---------------------------> EquilibratedSystem      (SHARED — ~9
            (this package, now)          (later; imports prepare)       (later; imports prepare)
 ```
 
-`prepare()` returns **plain openMM objects** (a serialized `System` + a `State` with positions
-and box vectors). That is exactly what both `app.Simulation` and `openmmtools.multistate`
-consume, so the production backends share nothing but this handoff. `prepare()` also writes the
-equilibrated system to disk, so equilibration can be run once and several production backends
-(or a separate SLURM job / separate package) can launch from the same equilibrated box.
+`prepare()` returns **plain openMM objects** (a serialized `System` + a `State` with positions and
+box vectors) — exactly what both `app.Simulation` and `openmmtools.multistate` consume, so the
+production backends share nothing but this handoff. It also writes the equilibrated system to disk,
+so equilibration runs once and any production backend (or a separate job) launches from the same
+box.
 
-## Science flow (ported) and openMM mapping
+## Pipeline phases and openMM mechanism
 
-| GROMACS stage | openMM equivalent | prepare / produce |
+| Phase | openMM mechanism | prepare / produce |
 |---|---|---|
-| build: pdb2gmx → editconf → solvate → genion | `pdbfixer` + `ForceField` + `Modeller.addSolvent` | prepare |
-| EM (steepest descent, restrained) | `simulation.minimizeEnergy()` with restraints | prepare |
-| heat (NVT, restrained) | `setVelocitiesToTemperature` + NVT segment | prepare |
-| density (NPT, restrained, iterative plateau) | `MonteCarloBarostat` + segment loop | prepare |
-| relax (unrestrained NPT, optional) | set restraint `k=0`, keep running NPT | prepare |
-| production (NPT/NVT) | MD: `Simulation.step()`; REMD/REST2: `multistate` sampler | **produce** |
-| export PDB + analysis | `PDBFile` / mdtraj PBC-wrap + a new in-package mdtraj analysis module | produce |
+| structure prep + solvation | `pdbfixer` (missing atoms/H, protonation) + `ForceField` + `Modeller.addSolvent` | prepare |
+| energy minimization (restrained) | `simulation.minimizeEnergy()` | prepare |
+| NVT equilibration (restrained) | `setVelocitiesToTemperature` + Langevin steps | prepare |
+| NPT density equilibration (restrained, adaptive plateau) | `MonteCarloBarostat` + segment loop | prepare |
+| restraint release (+ optional unrestrained NPT relax) | `context.setParameter("k", 0)` | prepare |
+| production (NPT or NVT) | MD: `Simulation.step()`; REMD/REST2: `multistate` sampler | **produce** |
+| export + analysis | `PDBFile` + `mdtraj` PBC wrap; in-package `mdtraj` analysis | produce |
+
+Restraints are held at full strength through the **entire** equilibration and released only at the
+**start of production**, so the production trajectory captures drift from the input pose (the
+analysis reference) — not drift accumulated during equilibration steps that are never analyzed.
 
 ## Dependencies
 
-Core openMM covers every protein force field needed — **no `openmmforcefields` dependency**
+Core openMM bundles every protein force field needed — **no `openmmforcefields` dependency**
 (verified against openMM 8.6.1 in `openmm_env`). `openmmtools` is required only for the future
-REMD/REST2 backends, so it is an **optional extra**, not a core dependency of plain MD.
+REMD/REST2 backends, so it is an **optional extra**, not a core dependency of plain MD. `mdtraj` is
+the single trajectory library (no MDAnalysis).
 
 ```
 # plain MD (now):
-conda create -n openmm_md -c conda-forge openmm pdbfixer mdtraj
+conda create -n openmm_pipelines -c conda-forge openmm pdbfixer mdtraj
 # + REMD/REST2 (later):
 conda install -c conda-forge openmmtools
 ```
@@ -83,17 +90,17 @@ tools/openmm_pipelines/
   pyproject.toml         # extras: [remd] -> openmmtools
   CLAUDE.md
   README.md
-  openmm_md/
+  openmm_pipelines/
     __init__.py          # exports PrepConfig, MDConfig, ProteinFF, WaterModel, prepare, run_md
     config.py            # PrepConfig (shared base) + MDConfig; enums; derived step counts
     build.py             # pdb -> solvated System + Topology + positions
-    restraints.py        # harmonic position restraint, k as global param
-    density.py           # volume-plateau convergence (port density_converged.py verbatim)
+    restraints.py        # harmonic position restraint, k as a global parameter
+    density.py           # volume-plateau convergence test (pure numpy)
     stages.py            # minimize / equilibrate_nvt / equilibrate_density / relax primitives
     prepare.py           # prepare(cfg: PrepConfig) -> EquilibratedSystem  (SHARED pipeline)
     produce.py           # produce_md(eq, cfg) + run_md(cfg)  (plain-MD backend)
     equilibrated.py      # EquilibratedSystem dataclass + to_disk / from_disk
-    analysis/            # new mdtraj-based analysis subpackage (NOT gromd_analysis)
+    analysis/            # mdtraj-based analysis subpackage
       __init__.py        #   re-exports the analysis entry points
       trajectory.py      #   load xtc+topology, PBC image_molecules, strip solvent, align to input pose
       metrics.py         #   rmsd_to_reference / radius_of_gyration / rmsf_per_residue (vs input pose)
@@ -107,19 +114,18 @@ tools/openmm_pipelines/
     #   ladder.py        # geometric temperature ladder, acceptance helpers
   tests/
     test_config.py
-    test_density.py       # port gromacs density_converged tests verbatim
+    test_density.py       # plateau-detection unit tests
 ```
 
-Package import name is `openmm_md` (underscore) — deliberately **not** `openmm`, to avoid
-shadowing the real package.
+Package import name is `openmm_pipelines` (underscore) — deliberately **not** `openmm`, to avoid shadowing
+the real package.
 
 ## config.py
 
-Config is split by the same seam: a shared `PrepConfig` base (everything through
-equilibration) and a thin `MDConfig` subclass adding production fields. Future `REMDConfig` /
-`REST2Config` subclass the **same** `PrepConfig`. Inheritance (not nesting) keeps attribute
-access flat — `cfg.temperature_k` works on every engine's config — while `prepare()` only ever
-depends on `PrepConfig` fields.
+Config is split by the same seam: a shared `PrepConfig` base (everything through equilibration) and
+a thin `MDConfig` subclass adding production fields. Future `REMDConfig` / `REST2Config` subclass
+the **same** `PrepConfig`. Inheritance (not nesting) keeps attribute access flat — `cfg.temperature_k`
+works on every engine's config — while `prepare()` only ever depends on `PrepConfig` fields.
 
 ```python
 from enum import Enum
@@ -145,15 +151,15 @@ class ForceFieldError(Exception):
 
 
 class ProteinFF(Enum):
-    AMBER99SBILDN = "amber99sbildn.xml"              # == gromacs default; legacy/reproduction
+    AMBER99SBILDN = "amber99sbildn.xml"              # legacy; for reproducing older work
     AMBER14SB     = "amber14/protein.ff14SB.xml"
     AMBER19SB     = "amber19/protein.ff19SB.xml"     # QM-trained backbone; recommended with OPC
-    CHARMM36      = "charmm36.xml"                    # ORIGINAL C36 (par_all36_prot)
-    CHARMM36M     = "charmm36_2024.xml"              # 36m (par_all36m_prot)
-    # CRITICAL: CHARMM36 != CHARMM36M. 36m is the Huang-2017 backbone-CMAP + glycine
-    # refinement (usually the right choice for folding/stability systems like WW domains).
-    # All verified to load in openMM 8.6.1 (modular paths preferred over the -all bundles,
-    # which also pull nucleic-acid params). No openmmforcefields needed.
+    CHARMM36      = "charmm36.xml"                    # original C36  (par_all36_prot)
+    CHARMM36M     = "charmm36_2024.xml"              # C36m          (par_all36m_prot)
+    # CRITICAL: CHARMM36 != CHARMM36M. 36m is the Huang-2017 backbone-CMAP + glycine refinement
+    # (usually the right choice for folding/stability systems such as WW domains). All verified to
+    # load in openMM 8.6.1; modular paths preferred over the -all bundles, which also pull
+    # nucleic-acid params. No openmmforcefields needed.
 
     @property
     def family(self) -> str:
@@ -170,7 +176,7 @@ class ProteinFF(Enum):
             case ProteinFF.AMBER99SBILDN: return NonbondedSpec(1.0, None, True)
             case ProteinFF.AMBER14SB:     return NonbondedSpec(1.0, None, True)
             case ProteinFF.AMBER19SB:     return NonbondedSpec(1.0, None, True)
-            case ProteinFF.CHARMM36:      return NonbondedSpec(1.2, 1.0, True)
+            case ProteinFF.CHARMM36:      return NonbondedSpec(1.2, 1.0, True)   # CHARMM: force-switched vdW
             case ProteinFF.CHARMM36M:     return NonbondedSpec(1.2, 1.0, True)
         # no default: a new member with no spec fails loudly here (exhaustiveness)
 
@@ -192,14 +198,14 @@ class WaterModel(Enum):
 
 
 # GENERAL water-packing rule. Modeller.addSolvent ships pre-equilibrated boxes ONLY for a few
-# geometries and rejects any other name (model='opc' -> ValueError). The packing box only needs
-# to match the water's SITE COUNT; parameters come from the FF xml, and the minimization step
-# (already in the pipeline) corrects the residual geometry. This is OpenMM's own documented
-# idiom ("a box of TIP4P-Ew water can be used for most four-site water models"). Verified in
-# openmm_env: model='tip4pew' + opc.xml yields real 4-site OPC (charges O=0, H=+0.6791,
-# M=-1.3583 — NOT TIP4P-Ew's +0.5242). Adding a new non-polarizable water = one WaterModel
-# entry with its site count; packing is derived, never special-cased. (Drude/polarizable water
-# such as swm4ndp is out of scope — needs a Drude integrator.)
+# geometries and rejects any other name (model='opc' -> ValueError). The packing box only needs to
+# match the water's SITE COUNT; parameters come from the FF xml, and the minimization step (already
+# in the pipeline) corrects the residual geometry. This is OpenMM's own documented idiom ("a box of
+# TIP4P-Ew water can be used for most four-site water models"). Verified in openmm_env:
+# model='tip4pew' + opc.xml yields real 4-site OPC (charges O=0, H=+0.6791, M=-1.3583 — NOT
+# TIP4P-Ew's +0.5242). Adding a new non-polarizable water = one WaterModel entry with its site
+# count; packing is derived, never special-cased. (Drude/polarizable water such as swm4ndp is out
+# of scope — needs a Drude integrator.)
 _PACKING_BOX = {3: "tip3p", 4: "tip4pew", 5: "tip5p"}      # site count -> addSolvent model=
 
 _RECOMMENDED_WATER = {
@@ -213,8 +219,8 @@ _RECOMMENDED_WATER = {
 
 def resolve(protein: ProteinFF, water: WaterModel) -> tuple[list[str], str]:
     """(ForceField xml list, addSolvent packing model). Raises on an illegal pairing — so the
-    solute FF and the water can never disagree, and the packing geometry is chosen by site count
-    in ONE place."""
+    solute FF and the water can never disagree, and the packing geometry is chosen by site count in
+    ONE place."""
     fam = protein.family
     if fam in ("charmm36", "charmm36_2024"):
         # CHARMM water is version-locked to its protein FF; only its bundled modified-TIP3P is
@@ -235,25 +241,25 @@ class PrepConfig(BaseModel, frozen=True):
     outdir: Path
     protein_ff: ProteinFF = ProteinFF.AMBER14SB
     water: WaterModel = WaterModel.TIP3P
-    ph: float = 7.4                         # physiological (blood); PDBFixer protonation heuristic
+    ph: float = 7.4                         # physiological; PDBFixer protonation heuristic
     box_shape: BoxShape = BoxShape.DODECAHEDRON
-    padding_nm: float = 1.0                 # openMM Modeller term (was gromacs box_buffer)
-    ionic_strength_molar: float = 0.15      # openMM addSolvent term (was gromacs salt_molar)
+    padding_nm: float = 1.0                 # minimum solute-to-box-edge distance
+    ionic_strength_molar: float = 0.15      # NaCl added beyond charge neutralization
     neutralize: bool = True
 
     # --- dynamics ---
     temperature_k: float = 300.0            # reference/equilibration temperature (= T_min for REMD)
     dt_ps: float = 0.004                    # 4 fs -> requires HMR (default on; see below)
     hydrogen_mass_amu: float = 4.0          # HMR; set 1.008 + dt_ps=0.002 to disable
-    friction_ps: float = 1.0               # Langevin friction (openMM convention; was gromacs gamma_ln 2.0)
+    friction_ps: float = 1.0               # Langevin friction coefficient
     ref_p_bar: float = 1.0
     restraint_k: float = 1000.0            # kJ/mol/nm^2 on protein heavy atoms
 
     # --- equilibration lengths ---
-    nvt_equil_ns: float = 0.2              # NVT equilibration (was gromacs "heat")
+    nvt_equil_ns: float = 0.2              # NVT equilibration length
     relax_ns: float = 0.0                  # optional unrestrained NPT before production
 
-    # --- density equilibration (ported adaptive protocol; see audit note) ---
+    # --- NPT density equilibration (adaptive plateau protocol) ---
     density_seg_steps: int = 10_000
     density_min_seg: int = 8
     density_max_seg: int = 20
@@ -261,7 +267,7 @@ class PrepConfig(BaseModel, frozen=True):
 
     # --- runtime ---
     platform: str = "CUDA"
-    seed: int | None = None               # None = random (pythonic; was gromacs -1 sentinel)
+    seed: int | None = None               # None = fresh RNG per run; int pins setup + RNG streams
 
     @model_validator(mode="after")
     def _check(self) -> "PrepConfig":
@@ -313,7 +319,7 @@ class MDConfig(PrepConfig):
 #     n_replicas: int = 24
 #     temps_list: tuple[float, ...] | None = None   # explicit ladder overrides geometric
 #     exchange_ps: float = 1.0
-#     ensemble: Ensemble = Ensemble.NVT             # production ensemble (NVT default)
+#     ensemble: Ensemble = Ensemble.NVT             # production ensemble
 #     iterations: int = ...            # from total_ns / exchange_ps
 #
 # class REST2Config(PrepConfig):
@@ -323,8 +329,8 @@ class MDConfig(PrepConfig):
 #     exchange_ps: float = 1.0
 ```
 
-The `validated` flag on `NonbondedSpec` is the structural hook for the CHARMM caution: flip it
-to `False` for any force field whose nonbonded handling has not been energy-matched, and config
+The `validated` flag on `NonbondedSpec` is the structural hook for the CHARMM caution: flip it to
+`False` for any force field whose nonbonded handling has not been energy-matched, and config
 validation refuses it until checked.
 
 ## equilibrated.py — the handoff object
@@ -338,8 +344,8 @@ from openmm.app import Topology
 @dataclass(frozen=True)
 class EquilibratedSystem:
     """Output of prepare(): plain openMM objects that BOTH app.Simulation and
-    openmmtools.multistate can consume. Serializable, so equilibration runs once and any
-    production backend (MD / REMD / REST2, same or separate job) starts from it."""
+    openmmtools.multistate can consume. Serializable, so equilibration runs once and any production
+    backend (MD / REMD / REST2, same or separate job) starts from it."""
     system: System
     topology: Topology
     positions: object            # list[Vec3] with units
@@ -388,8 +394,8 @@ def build_system(cfg) -> BuiltSystem:     # cfg: PrepConfig
     fixer.addMissingAtoms()
     fixer.addMissingHydrogens(cfg.ph)
 
-    # GUARD: PDBFixer must not add/remove disulfides — critical for disulfide-constrained
-    # designs (XBL peptides). A changed count means the input SG-SG bonding was not preserved.
+    # GUARD: PDBFixer must not add/remove disulfides — critical for disulfide-constrained designs
+    # (XBL peptides). A changed count means the input SG-SG bonding was not preserved.
     ss_after = _count_disulfides(fixer.topology)
     if ss_after != ss_before:
         raise PrepareError(
@@ -439,14 +445,14 @@ def _assert_water_topology(topology, system, water) -> None:
             "the M-site was not applied.")
 ```
 
-**Verified end to end in `openmm_env`** (1a22, ff19SB + OPC): `model='opc'` raises
-`ValueError: Unknown water model: opc`; `model='tip4pew'` + `opc.xml` yields 4-site waters
-`[O, H1, H2, M]` with charges `O=0.0, H=+0.6791, M=-1.3583` — real OPC, one virtual site per
-water — confirming the packing-by-site-count rule produces true parameters, not TIP4P-Ew.
+**Verified end to end in `openmm_env`** (ff19SB + OPC): `model='opc'` raises `ValueError: Unknown
+water model: opc`; `model='tip4pew'` + `opc.xml` yields 4-site waters `[O, H1, H2, M]` with charges
+`O=0.0, H=+0.6791, M=-1.3583` — real OPC, one virtual site per water — confirming the
+packing-by-site-count rule produces true parameters, not TIP4P-Ew.
 
 ## restraints.py
 
-Exactly the openMM cookbook idiom. `k` is a global parameter, so release is a single
+The standard openMM cookbook idiom. `k` is a global parameter, so release is a single
 `context.setParameter("k", 0.0)` — no force removal, no context rebuild.
 
 ```python
@@ -466,8 +472,8 @@ def add_restraint(system, positions, atom_indices, k):
 
 
 def reanchor(force, context, positions, atom_indices):
-    """Move restraint references to current coords (call once after minimization, so
-    equilibration restrains to the MINIMIZED pose — matching the GROMACS non-drifting reference)."""
+    """Move restraint references to the current coordinates (call once after minimization), so the
+    restraint reference is the minimized pose and never drifts during equilibration."""
     for add_idx, atom_idx in enumerate(atom_indices):
         force.setParticleParameters(add_idx, atom_idx, positions[atom_idx].value_in_unit(unit.nanometer))
     force.updateParametersInContext(context)
@@ -475,21 +481,25 @@ def reanchor(force, context, positions, atom_indices):
 
 ## density.py
 
-Port `RELE_simulations/gromacs_REMD/scripts/simulation/density_converged.py` **verbatim** —
-pure numpy (least-squares slope/plateau test over the trailing window). Its tests port over
-too, giving a passing suite on day one.
+NPT density equilibration runs in fixed-length segments; after each, the mean box volume is
+recorded and a least-squares line is fit through the trailing `density_min_seg` segments. The run
+stops when the fractional drift that line accounts for across the window is `<= density_tol_rel`.
+This is a **plateau (slope) test, not a consecutive-segment difference** — a sustained slow drift
+just under tolerance would pass every pairwise comparison while the box contracts several percent
+overall, whereas the slope over the window catches it; random scatter has ~zero slope and passes.
 
 ```python
 def density_converged(volumes: list[float], tol_rel: float, min_seg: int) -> bool:
     """True when a least-squares line through the trailing `min_seg` volumes accounts for a
     fractional drift <= tol_rel. Plateau test, not a consecutive-segment difference."""
-    ...  # verbatim port
+    ...  # pure numpy; unit-tested independently
 ```
 
 ## stages.py — equilibration primitives (shared)
 
-`tau_p` is gone (MC barostat has no coupling time — uses a volume-move frequency, default 25).
-Single integrator/thermostat for the whole system (no GROMACS Protein/Non-Protein split).
+One `LangevinMiddleIntegrator` is both the integrator and the thermostat for the whole system (no
+per-group thermostats). The `MonteCarloBarostat` uses its default volume-move frequency — it samples
+the correct NPT distribution without a coupling-time knob.
 
 ```python
 from openmm import unit, MonteCarloBarostat
@@ -509,7 +519,7 @@ def minimize(sim, cfg):
     assert math.isfinite(pe.value_in_unit(pe.unit)), f"non-finite energy after minimization: {pe}"
 
 
-def equilibrate_nvt(sim, cfg):                   # was GROMACS "heat"
+def equilibrate_nvt(sim, cfg):
     seed = cfg.seed if cfg.seed is not None else 0
     sim.context.setVelocitiesToTemperature(cfg.temperature_k * unit.kelvin, seed)
     sim.step(cfg.nvt_equil_steps)
@@ -571,10 +581,10 @@ def prepare(cfg) -> EquilibratedSystem:          # cfg: PrepConfig (or any subcl
 
     stages.minimize(sim, cfg)
     pos = sim.context.getState(getPositions=True).getPositions()
-    reanchor(restraint, sim.context, pos, heavy)     # restrain to minimized pose
+    reanchor(restraint, sim.context, pos, heavy)     # restrain to the minimized pose
     stages.equilibrate_nvt(sim, cfg)                 # NVT
     stages.add_barostat(sim, cfg)                    # -> NPT
-    stages.equilibrate_density(sim, cfg)             # restrained, iterative
+    stages.equilibrate_density(sim, cfg)             # restrained, adaptive plateau
 
     sim.context.setParameter("k", 0.0)               # release restraints
     if cfg.relax_ns > 0:
@@ -587,9 +597,9 @@ def prepare(cfg) -> EquilibratedSystem:          # cfg: PrepConfig (or any subcl
     return eq
 ```
 
-Note: the restraint force stays in the System with `k=0`. For REMD/REST2 that is harmless
-(zero energy/force), but the backends may strip it for cleanliness before building replica
-states — a one-liner on the serialized system.
+Note: the restraint force stays in the System with `k=0`. For REMD/REST2 that is harmless (zero
+energy/force), but the backends may strip it for cleanliness before building replica states — a
+one-liner on the serialized system.
 
 ## produce.py — plain-MD backend + driver
 
@@ -639,7 +649,7 @@ def run_md(cfg) -> Path:                          # cfg: MDConfig
 The interface is the config object; YAML/CLI are optional sugar. Scripting is a plain loop:
 
 ```python
-from openmm_md import MDConfig, run_md, ProteinFF, WaterModel
+from openmm_pipelines import MDConfig, run_md, ProteinFF, WaterModel
 
 base = MDConfig(pdb_in="ww.pdb", outdir="out",
                 protein_ff=ProteinFF.CHARMM36M, water=WaterModel.TIP3P, total_ns=200)
@@ -647,14 +657,23 @@ for t in (300, 310, 320, 330):
     run_md(base.model_copy(update={"temperature_k": t, "outdir": f"out/T{t}"}))
 ```
 
+## Analysis
+
+A new, in-package analysis subpackage (`openmm_pipelines/analysis/`, `mdtraj`-based). Production writes
+`prod.xtc`; analysis reads it + the topology and measures drift from the **input pose** (the
+reference): RMSD, Rg, per-residue RMSF, DSSP, and conformational clustering. It is a subpackage of
+small single-purpose modules (not one file) because it will grow — `trajectory` (load + PBC image +
+solvent strip + align), `metrics`, `dssp`, `clustering`, `plots`, with REMD-specific metrics
+(exchange acceptance, round-trip mixing) added alongside the REMD backend later. Each module is
+independently callable; `analysis/__init__.py` re-exports the entry points.
+
 ---
 
 ## Extending to REMD/REST2 (design target, not yet built)
 
 The point of the prepare/produce seam: adding T-REMD is a new `produce_*` backend plus a
-`PrepConfig` subclass — **zero changes to build/restraints/density/stages/prepare.** Sketch of
-the T-REMD backend (lives here under `[remd]` extra, or in `openmm_enh_samp`, importing
-`prepare`):
+`PrepConfig` subclass — **zero changes to build/restraints/density/stages/prepare.** Sketch of the
+T-REMD backend (lives here under `[remd]` extra, or in `openmm_enh_samp`, importing `prepare`):
 
 ```python
 from openmm import unit
@@ -694,25 +713,24 @@ def run_remd(cfg) -> Path:                        # cfg: REMDConfig
 
 What each engine adds on top of the shared base:
 
-- **T-REMD** — a temperature ladder + `ReplicaExchangeSampler` (or `ParallelTemperingSampler`,
-  which builds the ladder itself). Production ensemble NVT or NPT via the `ThermodynamicState`
-  pressure argument.
-- **REST2** — the same `multistate` machinery, but each replica's `ThermodynamicState` scales
-  only the **solute** terms by λ (effective-temperature ladder at one physical temperature).
-  openMM/openmmtools does not ship a turnkey REST2; the solute-scaling is the real work
-  (a `CompoundThermodynamicState` with a REST-region state, or a per-λ modified system).
-  **This is the one genuinely involved piece** — budget for it — but it still consumes
-  `prepare()` unchanged. It also inherits the GROMACS lesson that not every force field is
-  REST2-safe (CMAP), so the same energy-match check applies before trusting it.
+- **T-REMD** — a temperature ladder + `ReplicaExchangeSampler` (or `ParallelTemperingSampler`, which
+  builds the ladder itself). Production ensemble NVT or NPT via the `ThermodynamicState` pressure
+  argument.
+- **REST2** — the same `multistate` machinery, but each replica's `ThermodynamicState` scales only
+  the **solute** terms by λ (effective-temperature ladder at one physical temperature).
+  openMM/openmmtools does not ship a turnkey REST2; the solute-scaling is the real work (a
+  `CompoundThermodynamicState` with a REST-region state, or a per-λ modified system). **This is the
+  one genuinely involved piece** — budget for it — but it still consumes `prepare()` unchanged.
+  Not every force field is safely solute-scalable: a CMAP backbone cross-term (CHARMM, ff19SB) is
+  not covered by λ-scaling of the standard terms, so a force-field safety check gates REST2.
 
 Analysis: `multistate` writes a NetCDF (`.nc`) reporter with all replicas + exchange stats;
-`openmmtools.multistate.MultiStateReporter` / `MultiStateSamplerAnalyzer` read it. Acceptance
-rates and round-trip mixing (the GROMACS `gromd-acceptance` / `gromd-roundtrip` metrics) come
-from that file — a separate analysis concern, not part of this engine.
+`openmmtools.multistate.MultiStateReporter` / `MultiStateSamplerAnalyzer` read it. Acceptance rates
+and round-trip mixing come from that file — a separate analysis concern, not part of this engine.
 
 **Design implications already baked in for REMD/REST2:**
-1. `prepare()` returns serializable openMM objects (System xml + State), exactly what
-   `multistate` consumes — no `app.Simulation` assumption leaks past the seam.
+1. `prepare()` returns serializable openMM objects (System xml + State), exactly what `multistate`
+   consumes — no `app.Simulation` assumption leaks past the seam.
 2. `temperature_k` is the *reference/equilibration* temperature (= T_min), so equilibration is
    already engine-agnostic; REMD just adds `t_max_k` + `n_replicas`.
 3. Config uses inheritance from `PrepConfig`, so a `REMDConfig` reuses every shared field and
@@ -721,102 +739,61 @@ from that file — a separate analysis concern, not part of this engine.
 
 ---
 
-## GROMACS-ism audit
+## Design conventions
 
-What was deliberately dropped, renamed, or kept when porting — recorded so the port does not
-silently drag GROMACS conventions into openMM.
-
-### Dropped (openMM handles it, or it was GROMACS-specific machinery)
-
-- **Two-group thermostat** (`tc-grps = Protein Non-Protein`): openMM applies one Langevin
-  friction to the whole system. The solute/solvent split is a discouraged GROMACS practice
-  ("hot solvent / cold solute"); a single thermostat is standard and correct.
-- **`nstcomm` / COM-motion removal**: `createSystem` adds a `CMMotionRemover` by default.
-- **`constraint-algorithm = LINCS`**: openMM chooses CCMA/SETTLE internally.
-- **Scratch folder-symlink model** (`SYMLINK_BULK`, `PRESERVE_SCRATCH_FROM`, `SCRATCH_DIR`,
-  cross-fs `rename()` gotchas): reporters write wherever `outdir` points; set it to scratch.
-- **`tau_p`**: the MC barostat has no coupling time (uses a move frequency; default kept).
-- **Global `CUTOFF_NM` knob + `charmm*` string branch + `DispCorr`**: cutoff/switching are now
-  a property of the force field (`NonbondedSpec`); dispersion correction is the `createSystem`
-  default. No `if FF == charmm*` special-casing.
-- **`SEED = -1` sentinel**: replaced by `seed: int | None = None`.
-
-### Renamed (values were GROMACS/AMBER mental-model leaks)
-
-- `gamma_ln` (2.0) -> `friction_ps` (1.0, openMM convention)
-- `heat` / `HEAT_NS` -> `equilibrate_nvt` / `nvt_equil_ns` ("heat" implied a temperature ramp
-  that never happened — it is NVT equilibration with velocities set once)
-- `box_buffer` -> `padding_nm` (openMM Modeller term)
-- `salt_molar` -> `ionic_strength_molar` (openMM addSolvent term)
-- `T_SIM` / `T_MIN` -> `temperature_k` (the reference/equilibration temperature, engine-agnostic)
-
-### Kept deliberately (ported science, not an openMM convention)
-
-- **Iterative volume-plateau density equilibration** (`density_*` knobs + `density_converged`):
-  openMM's own convention is a single fixed-length NPT equilibration (e.g. 1 ns). The adaptive
-  plateau loop is carried over because it is genuinely more robust (catches a slowly
-  contracting box) and reuses already-tested code. Simpler alternative if it feels heavy: a
-  fixed-length NPT block.
-- **Restrained EM + restraints held through NVT/density, reference = minimized pose**: the
-  project's science goal (preserve the designed pose during equilibration), not an artifact.
-- **`restraint_k = 1000 kJ/mol/nm^2`** on protein heavy atoms: matches the GROMACS POSRES
-  default (the cookbook example uses 100 on CA only); a stronger, pose-preserving choice.
-
-### Adopted from openMM (were not in the GROMACS engine)
-
-- **4 fs timestep + hydrogen mass repartitioning** (`dt_ps=0.004`, `hydrogen_mass_amu=4`):
-  standard modern openMM practice, ~2x throughput. Drop to 2 fs via `dt_ps=0.002`,
-  `hydrogen_mass_amu=1.008` (validation enforces HMR when dt > 2.5 fs).
-- **Mixed precision** on GPU platforms (the recommended MD default).
-- **prepare/produce split + serialized equilibrated system**: enables equilibrate-once /
-  produce-many and the REMD/REST2 seam — no GROMACS analogue.
-
----
+- **One Langevin thermostat** (`LangevinMiddleIntegrator`) couples the whole system — integrator and
+  thermostat in one, no per-group thermostats.
+- **`MonteCarloBarostat` at its default volume-move frequency** — samples the correct NPT
+  distribution with no coupling-time parameter.
+- **Nonbonded cutoff + vdW switching are properties of the force field** (`NonbondedSpec`), passed
+  through `createSystem` kwargs — never special-cased by FF name, never read back off the built
+  System. Dispersion correction is the `createSystem` default.
+- **`seed=None` = fresh RNG per run**; an int pins the setup and RNG streams (GPU runs are still not
+  bit-for-bit reproducible — nondeterministic reduction order).
+- **4 fs timestep with hydrogen-mass repartitioning** (`hydrogenMass=4 amu`, `constraints=HBonds`);
+  drop to 2 fs by setting physical H mass and `dt_ps=0.002`.
+- **Mixed precision** on GPU platforms.
+- **prepare/produce split with a serialized equilibrated system** — equilibrate once, produce many,
+  and share the handoff with the future replica-exchange backends.
+- **Restraints held at full strength through all of equilibration, released only at production
+  start**, so the production trajectory records drift from the input pose.
+- **Water packing chosen by site count, parameters by force field** (the `_PACKING_BOX` rule) — so
+  any supported non-polarizable water works with one registry entry, and the FF/water pairing is a
+  single enforced `resolve()`.
 
 ## Structure-prep guards (implemented in build.py)
 
-- **Disulfide preservation** — SG-SG bond count is captured before fixing and asserted unchanged
-  after; a change raises `PrepareError`. Critical for disulfide-constrained designs.
+- **Disulfide preservation** — SG-SG bond count captured before fixing and asserted unchanged after;
+  a change raises `PrepareError`. Critical for disulfide-constrained designs.
 - **Water topology** — after solvation, every `HOH` must have the water model's expected particle
   count, and 4-site models must have virtual sites, else `PrepareError`. Backstops the
   packing-by-site-count rule against a future OpenMM box-reuse change.
 
-## Science-review flags (resolve before production, not port-mechanical)
+## Science-review flags (resolve before production)
 
-1. **Restraint reference vs MC barostat.** Restraint `x0` are absolute coordinates; the MC
-   barostat rescales molecule centers of mass. GROMACS used `refcoord-scaling = com`. Confirm
-   the openMM interaction is benign (restraints on solute, barostat scales by molecule).
-2. **Final-PDB PBC wrapping.** GROMACS used `trjconv -pbc mol -center -ur compact`; do the
-   equivalent with `mdtraj` image_molecules on export.
-3. **`protein_heavy_atoms` selection.** Must match GROMACS `-DPOSRES` (protein heavy atoms, no
-   hydrogens). Assert non-empty.
-4. **CHARMM energy-match.** Before trusting any CHARMM run, energy-match a known system to
-   confirm switching / `CustomNonbondedForce` behavior. AMBER needs no such check.
-5. **REST2 force-field safety (future).** CMAP-bearing force fields (CHARMM, AMBER ff19SB) are
-   not safely solute-scalable without handling the cross-term — the GROMACS engine rejected
-   `charmm*` for REST2 for exactly this. Carry that guard into the REST2 backend.
+1. **Restraint reference vs MC barostat.** Restraint `x0` are absolute coordinates; the MC barostat
+   rescales molecule centers of mass. Confirm the interaction is benign (restraints are on the
+   solute; the barostat scales by molecule).
+2. **Trajectory / final-PDB PBC wrapping.** Wrap with `mdtraj` `image_molecules` on export; do not
+   ship a raw box.
+3. **`protein_heavy_atoms` selection.** Protein heavy atoms, no hydrogens, no solvent/ions; assert
+   non-empty.
+4. **CHARMM energy-match.** Before trusting a CHARMM run, energy-match a known system to confirm the
+   switching / `CustomNonbondedForce` handling. AMBER needs no such check.
+5. **REST2 force-field safety (future).** CMAP-bearing force fields (CHARMM, ff19SB) are not safely
+   solute-scalable without handling the cross-term; gate REST2 behind the safety check.
 
 ## Settled defaults
 
-- **4 fs + HMR** (`dt_ps=0.004`, `hydrogen_mass_amu=4.0`). Drop to 2 fs via `dt_ps=0.002`,
-  `hydrogen_mass_amu=1.008` per run if needed.
-- **Adaptive density loop kept** — NPT in segments until the box volume plateaus, fail-loud if it
-  never does. The one deliberately-ported GROMACS protocol; correct + fail-loud, so retained.
+- **4 fs + HMR** (`dt_ps=0.004`, `hydrogen_mass_amu=4.0`). Drop to 2 fs per run if needed.
+- **Adaptive density plateau loop** — NPT in segments until the box volume plateaus; fail-loud if it
+  never does.
 - **Default pH 7.4** (physiological).
-- **Trajectory: XTC** via `app.XTCReporter` (verified present in openMM 8.6) — compact, mdtraj reads it.
-- **mdtraj is the only trajectory library** (no MDAnalysis); analysis is a new in-package module.
+- **Trajectory: XTC** via `app.XTCReporter` (verified present in openMM 8.6) — compact, read by mdtraj.
+- **mdtraj** is the only trajectory library (no MDAnalysis); analysis is a new in-package subpackage.
 
-## Analysis
+## Open decisions
 
-A **new, in-package analysis subpackage** (`openmm_md/analysis/`, `mdtraj`-based) — the GROMACS
-`gromd_analysis` package is **not** imported. `mdtraj` is the single trajectory library (no
-MDAnalysis). Production writes `prod.xtc`; analysis reads it + the topology and measures drift from
-the **input pose** (the reference): RMSD, Rg, per-residue RMSF, DSSP, and conformational clustering.
-
-It is a subpackage of small single-purpose modules (not one file) because it will grow:
-`trajectory` (load + PBC image + solvent strip + align), `metrics`, `dssp`, `clustering`, `plots`,
-with REMD-specific metrics (exchange acceptance, round-trip mixing) added alongside the REMD backend
-later. Each module is independently callable; `analysis/__init__.py` re-exports the entry points.
-- REMD production ensemble default: NVT (GROMACS default) or NPT?
-- Where the REMD/REST2 backends ultimately live: in this package under a `[remd]` extra, or in
-  a separate package that imports `openmm_md.prepare`. (Either works given the seam.)
+- REMD production ensemble default: NVT or NPT?
+- Where the REMD/REST2 backends ultimately live: in this package under a `[remd]` extra, or a
+  separate package that imports `openmm_pipelines.prepare`. (Either works given the seam.)

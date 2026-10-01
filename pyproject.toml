@@ -1,0 +1,33 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "openmm_pipelines"
+version = "0.0.1"
+description = "Explicit-solvent protein MD (T-REMD / REST2 / plain production) on OpenMM for designed-structure characterization"
+authors = [
+  { name = "Jackson Halpin" },
+]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+requires-python = "~=3.12"
+# Runtime scientific stack (openmm, mdtraj, pdbfixer, parmed, pymbar, mpi4py,
+# cuda) is conda-provided — see environment.yml. Listed here are only the
+# pure-pip deps the package imports directly.
+dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[tool.black]
+line-length = 99
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+)/
+'''
