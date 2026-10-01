@@ -1,0 +1,3 @@
+gpu_tests_*.out
+examples/demo_out/
+demo_short_run_*.out

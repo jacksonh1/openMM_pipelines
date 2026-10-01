@@ -78,6 +78,140 @@ Keeping `produce`/`simulate`+`run` dual functions — collapsed to one `run(eq, 
 
 ---
 
+## 2026-10-01 — final module tiers; `lib/`; honest stage names; relax dropped
+
+A naming/layout working session replaced the `core/` grab-bag with four tiers:
+shared **types** at root (`config.py`, `forcefield.py`), the reusable **toolkit**
+in `lib/`, the shared **pipeline** in `preparation/`, one folder per **engine**.
+
+**`core/` → split into `lib/` + `preparation/`.** "core" was too generic and mixed
+two kinds of thing: reusable helpers and pipeline stages. Now `preparation/` holds
+*only* the pipeline (composer + stages + the handoff output type), and `lib/` holds
+the toolkit.
+
+**`config.py` moved to the package root.** `PrepConfig` is the base config for
+*every* engine, so it is not part of the preparation pipeline — it belongs at the
+root with the other shared types. Each engine's config (`MDConfig`, …) stays in its
+own folder and subclasses it.
+
+**The `lib/` tier rule.** A module goes in `lib/` only if it is a *substantial,
+reusable* building block: used across multiple stages (`restraints`: add → reanchor
+→ release span the whole pipeline) OR pure and independently testable
+(`density_convergence`: numpy, no OpenMM — a kernel). Trivial glue that serves one
+stage stays with that stage — so `add_barostat` (2 calls, used only at the NVT→NPT
+transition) lives in `equilibration_steps.py`, not `lib/`. (`lib/` matches the
+sibling FragForge convention; verified no `lib/` pattern in `.gitignore`/
+`.mutagenignore` so the source tracks and syncs.)
+
+**Honest stage names.** `density.py` → `lib/density_convergence.py` (it is the
+convergence logic, not a verb). `stages.py` → `equilibration.py` →
+`equilibration_steps.py`, and it now holds *only* the restrained equilibration
+dynamics (`equilibrate_nvt`, `add_barostat`, `equilibrate_density`). `minimize` is
+static energy minimization — *not* equilibration — so it is its own `minimize.py`.
+The earlier grab-bag (minimize + nvt + barostat + density + relax under
+"equilibration") was the core dishonesty; splitting the non-equilibration ops out
+fixes it. Line counts drove the granularity: the op bodies are tiny (nvt 3 lines,
+relax 1), so one-file-*per-op* would be mostly boilerplate — group the coherent
+equilibration dynamics, split only the genuinely different `minimize`.
+
+**`relax` dropped entirely** (function + `relax_ns` + `relax_steps`). It was an
+optional unrestrained NPT at the reference T after releasing restraints, default
+0.0. It *contradicts* the tool's analysis contract: restraints are released only at
+production start so the production trajectory captures *all* drift from the input
+pose; a relax window lets early drift happen off-camera, so production under-reports
+it. There is also no restraint-release "shock" to absorb (`k=0` injects no energy;
+the thermostat handles it). If initial-settling exclusion is ever wanted it belongs
+in **analysis** (discard initial frames, or `pymbar.timeseries.detect_equilibration`
+— pymbar is in `openmm_env`), not baked into every prepare run. The REMD/REST2
+argument for a pre-production settle is real but points elsewhere: those need
+*per-replica* equilibration at each replica's own T/λ (a backend concern, via the
+multistate sampler), not a single reference-T relax in shared `prepare()`. Deferred
+to the REMD/REST2 backends (see TODO).
+
+No `cfg`-only `run` wrapper, one `run(eq, cfg)` per engine — unchanged from the
+earlier layout decision.
+
+---
+
+## 2026-10-01 — output contract (FIRST DRAFT — will be refined)
+
+**Status: first draft.** Captured so implementation can proceed; expected to change as
+we learn what analysis/QC actually needs. Goal: capture every parameter + piece of
+information needed for reproducibility and QC.
+
+**Layout** (one `outdir`, split by the seam):
+```
+outdir/
+  config.json          # all PrepConfig/MDConfig fields + derived step counts (intent)
+  run_info.json        # openmm/python/dep versions, platform+precision, GPU, timestamp,
+                       #   host, SLURM id, RESOLVED ff xml list + water + packing box
+  input.pdb            # exact input, copied (no hash — the copy is the record)
+  prepared/
+    system.xml         # serialized System — authoritative record of forces/params
+    state.xml          # saveState XML (PORTABLE): positions + velocities + box
+    topology.cif       # mmCIF (handles >99,999 atoms; PDB serial overflows)
+    prep_report.json   # QC: build + minimize + density-equilibration metrics
+  production/
+    trajectory.xtc
+    production.log     # StateDataReporter: step,time,PE,KE,totalEnergy,T,V,density,speed
+    final_state.xml    # saveState (portable restart)
+    production.chk      # saveCheckpoint (exact restart; same hardware+openmm ONLY)
+    run_report.json    # QC: timing, T/density/energy stats, stability flag
+```
+
+**Grounded in OpenMM docs (2026-10-01):**
+- `prepared/state.xml` is a **`saveState` XML** (portable: positions+velocities+box),
+  *not* a checkpoint — that is what lets any node load the equilibrated box (the
+  seam's "equilibrate once, produce anywhere"). Docs: a checkpoint "can only be loaded
+  into another Simulation that has an identical System, uses the same Platform and
+  OpenMM version, and is running on identical hardware."
+- Production keeps **both** `final_state.xml` (portable resume) and `production.chk`
+  (exact same-hardware resume, keeps RNG state).
+- `production.log` includes **KE + totalEnergy** (energy-drift QC), confirmed
+  reportable by `StateDataReporter`.
+- `System` XML excludes the `Topology`, so `topology.cif` is written separately
+  (`PDBxFile.writeFile`).
+
+**Typed, not raw dicts:** `run_info.json` / `prep_report.json` / `run_report.json` are
+serialized from `RunInfo` / `PrepReport` / `RunReport` dataclasses (fail-loud style).
+
+**Not content-addressed:** no input hash, no FragForge-style `deterministic_id` — runs
+are identified by `outdir`. (Earlier draft had a sha256; dropped as unjustified here.)
+
+**Caveat (documented in run_info):** GPU runs are not bit-reproducible even with
+`seed` (nondeterministic reduction order); `seed` pins setup + RNG streams, not the
+trajectory. `saveState` also omits RNG state, so a state-resumed trajectory differs.
+
+---
+
+## 2026-10-01 — handoff dataclasses live in `preparation/handoff.py` (not `equilibrated.py`)
+
+**Decision.** The module holding `BuiltSystem` + `EquilibratedSystem` is
+`core/handoff.py`.
+
+**Why.** The module holds *data classes* (the objects that cross the prepare/produce
+seam), not the *action* of equilibrating — the verb lives in `stages.py` /
+`prepare.py`, so `equilibrate.py`/`equilibration.py` would mislead. It also holds
+`BuiltSystem`, which is *pre*-equilibration, so `equilibrated.py` (the original name)
+was too narrow. `handoff` names the role we already use in prose for these objects.
+
+---
+
+## 2026-10-01 — GPU tests via SLURM on the lab's pinned nodes
+
+**Decision.** `slow` tests (real OpenMM dynamics) run on a GPU through
+`tests/gpu_tests.sbatch` (partition `pi_keating`, `gpu:l40s:1`, env `openmm_env`),
+pinned to the user's usual nodes with `-w node3620` / `-w node3619`. Test platform is
+env-driven: `OPENMM_TEST_PLATFORM` (default `CPU`, set to `CUDA` by the sbatch). CPU
+runs of the solvated-system dynamics tests are too slow for an interactive loop
+(>120 s) — GPU is the right harness.
+
+**Why.** Keeps the fast pure/`build` tests runnable anywhere while the dynamics tests
+get a GPU without hardcoding a platform. Mirrors the lab's existing
+`Ellen_WW_simulations/openmm_env_test` sbatch header.
+
+---
+
 ## 2026-10-01 — prepare() writes topology; from_disk(outdir) is one-arg
 
 **Decision.** `prepare()` writes a topology file (PDB/CIF) alongside `system.xml` +

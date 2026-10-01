@@ -1,33 +1,36 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "openmm_pipelines"
 version = "0.0.1"
-description = "Explicit-solvent protein MD (T-REMD / REST2 / plain production) on OpenMM for designed-structure characterization"
-authors = [
-  { name = "Jackson Halpin" },
-]
-readme = "README.md"
-classifiers = [
-    "Programming Language :: Python :: 3",
-]
-requires-python = "~=3.12"
-# Runtime scientific stack (openmm, mdtraj, pdbfixer, parmed, pymbar, mpi4py,
-# cuda) is conda-provided — see environment.yml. Listed here are only the
-# pure-pip deps the package imports directly.
+description = "Pythonic OpenMM engine for explicit-solvent protein MD (plain MD now; T-REMD / REST2 behind the prepare/produce seam)"
+requires-python = ">=3.10"              # match statements, zip(strict=True)
 dependencies = [
+    "openmm>=8.6",
+    "pdbfixer",                          # conda-forge; structure prep + protonation
+    "mdtraj",                            # the single trajectory library (no MDAnalysis)
     "numpy",
-    "scipy",
+    "scipy",                             # analysis clustering
+    "pandas",                            # production.log parsing for run_report
+    "matplotlib",                        # analysis plots
+    "pydantic>=2",
 ]
 
-[tool.black]
-line-length = 99
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.venv
-)/
-'''
+[project.optional-dependencies]
+remd = ["openmmtools"]                   # only the REMD / REST2 backends need it
+test = ["pytest"]
+
+# NOTE: openmm + pdbfixer are distributed via conda-forge. The intended install is
+#   conda create -n openmm_pipelines -c conda-forge openmm pdbfixer mdtraj
+#   pip install -e .            # (+ '.[remd]' for the replica-exchange backends)
+
+[tool.setuptools.packages.find]
+include = ["openmm_pipelines*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: builds/runs real OpenMM systems (solvation, dynamics); deselect with -m 'not slow'",
+]

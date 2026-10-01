@@ -7,7 +7,7 @@ FAIL a slow sustained drift that a consecutive-segment difference would miss.
 import numpy as np
 import pytest
 
-from openmm_pipelines.core.density import assess_plateau, density_converged
+from openmm_pipelines.lib.density_convergence import assess_plateau, density_converged
 
 TOL = 0.005  # 0.5 % fractional drift across the window
 MIN_SEG = 8

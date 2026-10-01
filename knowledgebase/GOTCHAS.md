@@ -8,6 +8,47 @@ mistake twice.
 
 ---
 
+## A new Context resets global parameters to the force's DEFAULT (restraint release)
+
+**Trigger.** Releasing a restraint (or any `addGlobalParameter`-controlled force) with
+`context.setParameter(...)`, then building a *new* `Context` from the same `System` —
+e.g. production from an `EquilibratedSystem`, or an eq reloaded from disk.
+
+**What goes wrong.** `context.setParameter("k", 0)` changes the value only in *that*
+context. The `System`'s force still carries the **default** set by
+`addGlobalParameter("k", restraint_k)`. A new `Context` initializes every global to the
+force's default — so production would silently re-enable restraints at full strength,
+pinning the structure and invalidating the entire run.
+
+**Fix.** Bake the release into the force default before handoff:
+`force.setGlobalParameterDefaultValue(index, 0.0)` (then the serialized System and any
+new context start at 0). Done in `prepare()` at restraint release; belt-and-suspenders
+alternative is to strip the force entirely. Setting only the context value is not
+enough.
+
+---
+
+## OpenMM checkpoint (.chk) is NOT portable — use a saveState XML to move between nodes
+
+**Trigger.** Reloading a production restart on a different node, GPU, or after an
+OpenMM upgrade; moving the equilibrated system from the prepare job to a production
+job on another node.
+
+**What goes wrong.** `simulation.saveCheckpoint()` writes a binary checkpoint that
+"can only be loaded into another Simulation that has an identical System, uses the
+same Platform and OpenMM version, and is running on identical hardware" (OpenMM
+docs). Load it anywhere else and it fails.
+
+**Fix.** For anything that must cross machines/versions, use the **portable** XML:
+`simulation.saveState()` / `loadState()` (or `XmlSerializer` of a `State`) — it holds
+positions, velocities, and box vectors. We use `saveState` for `prepared/state.xml`
+(so any node can launch production from it) and for `production/final_state.xml`.
+`production/production.chk` (checkpoint) is kept only for *exact* same-hardware resume
+(it also preserves RNG state); never rely on it off the original node. Trade-off: a
+state-resumed trajectory is not bit-identical (RNG state is not in the XML).
+
+---
+
 ## Density convergence must be a plateau (slope) test, not a consecutive-segment difference
 
 **Trigger.** Checking whether NPT density/box volume has equilibrated.

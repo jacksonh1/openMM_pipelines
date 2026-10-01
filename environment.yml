@@ -29,5 +29,9 @@ dependencies:
   - netcdf4
   - pytables
   - pyyaml
+  - matplotlib-base
+  # ── Config + tests ──────────────────────────────────────────────────
+  - pydantic>=2
+  - pytest
   - pip:
     - -e .

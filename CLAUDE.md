@@ -6,17 +6,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Knowledgebase — read at session start, update at session end
 
-`knowledgebase/` (git-tracked) is the project's persistent memory for FragForge:
+`knowledgebase/` (git-tracked) is the project's persistent memory for openmm_pipelines:
 - `HISTORY.md` — dated session log
 - `DECISIONS.md` — design decision records (the *why*)
 - `CODEBASE_SHAPE.md` — architecture map
+- `GOTCHAS.md` — discovered pitfalls (full detail; the index below points here)
 - `TODO.md` — known missing features, gaps, and improvements
 
 **Skim `HISTORY.md` + `DECISIONS.md` at the start of substantive work**, and follow
 the maintenance protocol in `knowledgebase/README.md` at the end of a session where
 something non-trivial happened. Keep entries terse.
 
+---
 
+## Environment
+
+This is an **isolated tool** with its own conda env — **`openmm_env`**. Use it for
+everything here; do **not** use the sibling repos' envs (`fragforge`,
+`xbl_pep_design`, `basic`). It has openmm 8.6.1, pdbfixer, mdtraj, numpy, scipy,
+**openmmtools 0.26.0** (so the future REMD/REST2 backends can be tested in-place),
+plus pydantic + pytest. The package is installed editable (`pip install -e .`).
+
+```
+conda activate openmm_env
+python -m pytest -q
+```
+
+Note: `openmm` is *not* importable in `fragforge`/`basic`. The pure units
+(`forcefield.py`, `config.py`, `density.py`) import no OpenMM and run on any env, but
+run the suite in `openmm_env` so the solvation/dynamics modules are covered too.
 
 ---
 
@@ -58,6 +76,10 @@ If there's a cleaner, faster, or more correct approach than what was asked for, 
 ### Prefer simple and scalable solutions
 
 Solutions should work for 8, 48, or 128 replicas without special-casing. Prefer shell/Python idioms that stay readable as the codebase grows. If a task has a five-line solution and a fifty-line solution, understand why the complexity is or isn't justified before recommending it.
+
+Don't hand-roll a standard algorithm — add the well-known library (scipy, etc.) and use it. I am fine with adding a dependency if it is widely used and well-maintained. Tell me when you add a dependency and why it is justified, then update the pyproject and/or yaml environment files.
+
+If you see an existing style or convention in the codebase, don't just blindly follow it, particularly if it is a bad one. Bad patterns in quick exploratory/pilot analysis should not be propogated to production code. Ask for guidance or propose a better approach.
 
 ---
 
@@ -116,3 +138,5 @@ caused a failure — add its detail to `GOTCHAS.md` immediately AND add a one-li
 - **Bash: a `[[ … ]] && echo` as the LAST line of a `set -e` script exits 1** — a false test makes SLURM report a successful job as FAILED; use a real `if` (also applies to `((n++))` / `grep -q` as the final statement).
 - **Modeller.addSolvent rejects most water-model names** — `model='opc'` raises `ValueError: Unknown water model: opc`; pack by SITE COUNT (`_PACKING_BOX`), parameters come from the FF xml (`model='tip4pew'` + `opc.xml` yields real OPC). `_assert_water_topology` backstops it.
 - **CHARMM36 != CHARMM36M** — different force fields (`charmm36.xml` vs `charmm36_2024.xml`); 36m is the Huang-2017 CMAP refinement, usually right for folding/stability. Pick deliberately; energy-match any CHARMM run before trusting it (`NonbondedSpec.validated` gate).
+- **OpenMM checkpoint (.chk) is NOT portable** — loads only on identical System + Platform + OpenMM version + hardware; use a `saveState` XML (`state.xml`/`final_state.xml`) to move an equilibrated system or restart across nodes.
+- **A new Context resets globals to the force DEFAULT** — `context.setParameter("k",0)` only affects that context; a fresh production context re-enables restraints at full strength. Bake release into the System with `force.setGlobalParameterDefaultValue(idx, 0.0)` (done in `prepare()`).
