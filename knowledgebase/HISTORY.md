@@ -136,3 +136,8 @@ Reworked the module layout with the user into four tiers (see `DECISIONS.md`):
   smoke). **50 non-slow tests pass.** Wired `analyze()` into the demo driver.
 - Open: output-contract refinement; REMD/REST2 backends (+ `analysis/remd.py` for
   exchange/round-trip metrics).
+- Docs: removed the `validated` flag (YAGNI) + added CHARMM potential-vs-force-switch
+  provenance/caveat (verified vs OpenMM/ParmEd docs); force-field energy-match tool
+  deferred to TODO with the no-install (OpenMM-only) design recorded. Rewrote
+  `SKELETON_v2.md` to the as-built state (implemented, trimmed — no duplicated code)
+  and reduced `README.md` to a barebones install + 5-line usage + docs pointer.
