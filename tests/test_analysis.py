@@ -71,5 +71,6 @@ def test_analyze_demo_smoke():
 
     adir = analyze(DEMO)
     for name in ("analysis_report.json", "analysis_data.npz",
-                 "rmsd.png", "rg.png", "rmsf.png", "dssp.png"):
+                 "rmsd.png", "rg.png", "rmsf.png", "dssp.png",
+                 "processed.xtc", "processed_topology.pdb"):
         assert (adir / name).exists(), f"missing {name}"

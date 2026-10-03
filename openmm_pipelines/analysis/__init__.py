@@ -18,6 +18,7 @@ from .clustering import cluster_conformations, pairwise_rmsd
 from .dssp import secondary_structure, ss_fractions
 from .metrics import radius_of_gyration, rmsd_to_reference, rmsf_per_residue
 from .trajectory import (
+    export_processed_trajectory,
     load_input_reference,
     load_protein_trajectory,
     load_system_trajectory,
@@ -29,6 +30,7 @@ __all__ = [
     "analyze",
     "load_protein_trajectory",
     "load_system_trajectory",
+    "export_processed_trajectory",
     "to_protein",
     "load_input_reference",
     "superpose_to_reference",
@@ -49,6 +51,8 @@ def analyze(outdir, cluster_cutoff_ang: float = 2.0) -> Path:
     outdir = Path(outdir)
     adir = outdir / "analysis"
     adir.mkdir(parents=True, exist_ok=True)
+
+    export_processed_trajectory(outdir)  # viewable processed.xtc + processed_topology.pdb
 
     traj, reference = load_protein_trajectory(outdir)
     time_ps = traj.time

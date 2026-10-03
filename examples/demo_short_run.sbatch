@@ -18,4 +18,4 @@ cd "$SLURM_SUBMIT_DIR"   # sbatch copies this script elsewhere; rely on the subm
 
 echo "node: $(hostname)"
 nvidia-smi -L
-python examples/demo_short_run.py
+python ./demo_short_run.py

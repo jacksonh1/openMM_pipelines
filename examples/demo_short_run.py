@@ -22,7 +22,7 @@ def main() -> None:
         density_min_seg=3,
         density_max_seg=12,
         density_tol_rel=0.02,
-        total_ns=0.02,  # 20 ps production
+        total_ns=0.2,  # 20 ps production
         traj_ps=2.0,
         platform="CUDA",
         seed=12345,

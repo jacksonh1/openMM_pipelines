@@ -6,8 +6,8 @@ archive/
 temp/
 
 # ── Trajectory / coordinate / checkpoint files (large binaries) ─────────
-*.dcd
-*.xtc
+# *.dcd
+# *.xtc
 *.trr
 *.nc
 *.h5
