@@ -15,8 +15,8 @@ drift from input, RMSF = local flexibility). It never folds from an unfolded
 state; the input pose is the analysis reference.
 
 It is a `tools/` library — same tier as `snekwrap` and `FragForge` — imported by
-campaigns via `import openmm_pipelines`. Scope now is **plain production MD**;
-T-REMD and REST2 are designed-for but not built.
+campaigns via `import openmm_pipelines`. Scope now is **plain production MD** and
+**T-REMD** (both built); REST2 is designed-for but not built.
 
 ## The central idea: the prepare/produce seam
 
@@ -75,10 +75,10 @@ openmm_pipelines/
     config.py              #   MDConfig(PrepConfig)                             [BUILT]
     production.py          #   run(eq, cfg) -> Path                             [soon]
 
-  remd/                    # T-REMD  [SOON; needs [remd] extra]
-    config.py              #   REMDConfig(PrepConfig)  (+ per-replica equilibration)
-    ladder.py              #   geometric_ladder, acceptance helpers
-    production.py          #   run(eq, cfg) -> Path  (openmmtools multistate)
+  remd/                    # T-REMD  [BUILT; needs [remd] extra]
+    config.py              #   REMDConfig(PrepConfig) (NVT, geometric ladder)      [BUILT]
+    ladder.py              #   geometric_ladder (np.geomspace)                     [BUILT]
+    production.py          #   run(eq, cfg) -> Path (ReplicaExchangeSampler, NVT)  [BUILT]
 
   rest2/                   # REST2  [SOON; needs [remd] extra]
     config.py              #   REST2Config(PrepConfig)
@@ -91,10 +91,14 @@ openmm_pipelines/
     dssp.py                #   secondary_structure, ss_fractions (mdtraj compute_dssp)
     clustering.py          #   pairwise_rmsd + cluster_conformations (scipy hierarchical)
     plots.py               #   rmsd / rg / rmsf / dssp PNGs (matplotlib Agg)
-    remd.py                #   [SOON] exchange acceptance, round-trip mixing (reads .nc)
+    drift.py               #   drift_report: RMSD/Rg/RMSF/SS + plots vs design pose,
+                           #     shared primitive used by analyze + analyze_remd         [BUILT]
+    remd.py                #   [BUILT] exchange/mixing diagnostics (openmmtools analyzer)
+                           #     + de-multiplex fixed-T ensembles from the .nc (needs [remd])
 tests/
   test_forcefield.py (10) · test_config.py (13) · test_density.py (10)   [BUILT, pass]
   test_restraints.py (6) · test_build.py (7) · test_equilibration.py (5, slow) [BUILT, pass]
+  test_remd_ladder.py (3) · test_remd_config.py (7) · test_remd.py (2, slow)   [BUILT, pass]
   gpu_tests.sbatch         # runs the suite on CUDA (-w node3620)
 ```
 

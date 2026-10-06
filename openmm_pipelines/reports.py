@@ -127,3 +127,28 @@ class RunReport:
     stable: bool
     platform: str
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class REMDRunReport:
+    """QC from a T-REMD production run.
+
+    The health check for replica exchange is NOT single-trajectory stability but
+    *mixing*: `mean_neighbor_acceptance` is the average exchange-acceptance over
+    adjacent ladder rungs; a near-zero value means a broken ladder link where replicas
+    stop diffusing through temperature space (add rungs there). Round-trip diffusion is
+    reported separately by `analysis/remd.py`.
+    """
+
+    n_replicas: int
+    temperatures_k: list[float]
+    n_iterations: int
+    steps_per_iteration: int
+    exchange_attempt_ps: float
+    total_ns_per_replica: float
+    replica_mixing_scheme: str
+    mean_neighbor_acceptance: float
+    wall_seconds: float
+    aggregate_ns_per_day: float
+    platform: str
+    notes: list[str] = field(default_factory=list)

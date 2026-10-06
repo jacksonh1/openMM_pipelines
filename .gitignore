@@ -1,3 +1,4 @@
 gpu_tests_*.out
-examples/demo_out/
+examples/MD_demo/demo_out/
+examples/REMD_demo/demo_remd_out/
 demo_short_run_*.out

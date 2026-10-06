@@ -15,6 +15,7 @@ import numpy as np
 from ..reports import write_json
 from . import plots
 from .clustering import cluster_conformations, pairwise_rmsd
+from .drift import drift_report
 from .dssp import secondary_structure, ss_fractions
 from .metrics import radius_of_gyration, rmsd_to_reference, rmsf_per_residue
 from .trajectory import (
@@ -41,6 +42,7 @@ __all__ = [
     "ss_fractions",
     "cluster_conformations",
     "pairwise_rmsd",
+    "drift_report",
     "plots",
 ]
 
@@ -57,41 +59,20 @@ def analyze(outdir, cluster_cutoff_ang: float = 2.0) -> Path:
     traj, reference = load_protein_trajectory(outdir)
     time_ps = traj.time
 
-    rmsd = rmsd_to_reference(traj, reference)
-    rg = radius_of_gyration(traj)
-    resseq, rmsf = rmsf_per_residue(traj)
-    fractions = ss_fractions(traj)
+    drift, arrays = drift_report(traj, reference, adir, time_ps, "time (ps)",
+                                 "drift from input pose")
     labels = (
         cluster_conformations(traj, cluster_cutoff_ang)
         if traj.n_frames >= 2
         else np.array([1])
     )
 
-    plots.plot_timeseries(time_ps, rmsd, "Cα RMSD to design (Å)",
-                          adir / "rmsd.png", "drift from input pose")
-    plots.plot_timeseries(time_ps, rg, "Rg (Å)", adir / "rg.png", "radius of gyration")
-    plots.plot_rmsf(resseq, rmsf, adir / "rmsf.png")
-    plots.plot_ss_fractions(time_ps, fractions, adir / "dssp.png")
-
-    np.savez(
-        adir / "analysis_data.npz",
-        time_ps=time_ps, rmsd_ang=rmsd, rg_ang=rg,
-        resseq=resseq, rmsf_ang=rmsf, cluster_labels=labels,
-        **{f"ss_{name}": frac for name, frac in fractions.items()},
-    )
+    np.savez(adir / "analysis_data.npz", time_ps=time_ps, cluster_labels=labels, **arrays)
 
     summary = {
         "n_frames": int(traj.n_frames),
         "n_residues": int(traj.topology.n_residues),
-        "rmsd_to_design_ang": {
-            "mean": float(rmsd.mean()), "max": float(rmsd.max()), "final": float(rmsd[-1]),
-        },
-        "rg_ang": {"mean": float(rg.mean()), "std": float(rg.std())},
-        "rmsf_ang": {
-            "mean": float(rmsf.mean()), "max": float(rmsf.max()),
-            "max_residue": int(resseq[int(rmsf.argmax())]),
-        },
-        "ss_fraction_mean": {name: float(frac.mean()) for name, frac in fractions.items()},
+        **drift,
         "n_clusters": int(len(set(labels.tolist()))),
     }
     write_json(summary, adir / "analysis_report.json")

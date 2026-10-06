@@ -18,7 +18,7 @@ from openmm_pipelines.analysis import (
     rmsf_per_residue,
 )
 
-DEMO = Path(__file__).parents[1] / "examples" / "demo_out"
+DEMO = Path(__file__).parents[1] / "examples" / "MD_demo" / "demo_out"
 
 
 def _toy_traj(n_frames=6, n_res=5, drift=0.02):
@@ -65,7 +65,7 @@ def test_clustering_returns_one_label_per_frame():
 
 
 @pytest.mark.skipif(not (DEMO / "production" / "trajectory.xtc").exists(),
-                    reason="demo_out not present (run examples/demo_short_run.py)")
+                    reason="demo_out not present (run examples/MD_demo/demo_short_run.py)")
 def test_analyze_demo_smoke():
     from openmm_pipelines.analysis import analyze
 

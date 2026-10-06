@@ -8,6 +8,42 @@ mistake twice.
 
 ---
 
+## openmmtools `read_mixing_statistics()` returns PER-ITERATION matrices, not cumulative
+
+**Trigger.** Computing exchange acceptance from
+`MultiStateReporter.read_mixing_statistics()` (REMD run report / analysis).
+
+**What goes wrong.** The docstring says shape `(n_states, n_states)`, but with the
+default `iteration=slice(None)` it returns **per-iteration** stacks of shape
+`(n_iterations, n_states, n_states)`. Indexing `n_accepted[i, i+1]` then yields a 1-D
+array, not a scalar — `ValueError: The truth value of an array with more than one
+element is ambiguous` the moment you compare or divide it.
+
+**Fix.** Sum over the iteration axis first:
+`n_accepted = np.asarray(accepted).sum(axis=0)` (same for `proposed`), giving the
+cumulative `(n_states, n_states)` matrices. Done in `remd/production._mean_neighbor_acceptance`
+and `analysis/remd.exchange_diagnostics`.
+
+---
+
+## mdtraj Trajectory needs float32 xyz/box, and takes no `unitcell_vectors` kwarg
+
+**Trigger.** Building an `md.Trajectory` by hand from de-multiplexed REMD positions
+(`analysis/remd.demux_state`) — positions/box come out of openmmtools as float64 Vec3
+lists.
+
+**What goes wrong.** Two separate traps: (1) `md.Trajectory(xyz, top,
+unitcell_vectors=...)` raises `TypeError` — the ctor takes `unitcell_lengths` /
+`unitcell_angles`, not vectors; set the full triclinic box via the
+`traj.unitcell_vectors` *attribute* after construction. (2) Passing float64 arrays
+makes `image_molecules` crash with `ValueError: Buffer dtype mismatch, expected 'float'
+but got 'double'` — mdtraj's C core is hard-wired to float32.
+
+**Fix.** `md.Trajectory(np.asarray(frames, dtype=np.float32), top)` then
+`traj.unitcell_vectors = np.asarray(boxes, dtype=np.float32)`.
+
+---
+
 ## A new Context resets global parameters to the force's DEFAULT (restraint release)
 
 **Trigger.** Releasing a restraint (or any `addGlobalParameter`-controlled force) with

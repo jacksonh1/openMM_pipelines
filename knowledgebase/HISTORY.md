@@ -5,6 +5,48 @@ factual.
 
 ---
 
+## 2026-10-06 — T-REMD backend built end to end
+
+- Built the **T-REMD** engine behind the prepare/produce seam (`remd/`) + its analysis
+  (`analysis/remd.py`). Zero changes to `lib/`/`preparation/` — new engine folder +
+  `REMDConfig(PrepConfig)` only, as the seam design promised. `prepare()` was reused
+  unchanged (REMDConfig IS-A PrepConfig).
+- **Production is NVT** (user decision 2026-10-06): equilibrated box already at target
+  density, replicas hold volume fixed, so `remd.production._nvt_system` strips the
+  `MonteCarloBarostat` from a serialized copy and rungs differ only in temperature.
+- Backend: `openmmtools.multistate.ReplicaExchangeSampler` + geometric ladder
+  (`remd/ladder.py`, `np.geomspace`) + `LangevinDynamicsMove(reassign_velocities=True)`.
+  Per-replica equilibration via `sampler.equilibrate()` (discarded) — the replacement
+  for the dropped shared-reference `relax`. Platform set on
+  `cache.global_context_cache` (openmmtools reads it there, not per-call).
+- **Analysis resolves the "single coordinate set vs fixed-T ensemble" question**
+  (the CLAUDE.md critical concept): `exchange_diagnostics` reports per-neighbour
+  acceptance + the replica->state permutation, plus mixing from openmmtools'
+  `ReplicaExchangeAnalyzer.generate_mixing_statistics` (transition-matrix subdominant
+  eigenvalue + state statistical inefficiency — the library's canonical mixing metric);
+  `demux_state(k)` rebuilds the fixed-temperature NVT ensemble for rung k by picking, at
+  each checkpointed iteration, the replica then occupying state k. Only the demuxed T_min
+  ensemble feeds RMSD/Rg/RMSF/SS (vs the input design pose).
+- **Principle review (same session).** (1) Dropped a hand-rolled round-trip counter in
+  favour of openmmtools' `generate_mixing_statistics` (don't hand-roll a standard
+  algorithm). (2) Extracted `analysis/drift.py::drift_report` — the RMSD/Rg/RMSF/SS +
+  4-plots + summary block shared by `analyze` (plain MD) and `analyze_remd`; both now
+  compose it (was duplicated). Fixed a mislabel: demuxed-ensemble x-axis is "demuxed
+  frame", not "time (ps)" (`plot_timeseries`/`plot_ss_fractions` took an `xlabel` param).
+- Output contract: `outdir/remd/` → remd.nc (+ checkpoint), ladder.json, run_report.json
+  (`REMDRunReport`: mean neighbour acceptance etc.); `outdir/remd/analysis/` →
+  exchange_report.json, acceptance.png, replica_walk.png, demuxed ensemble xtc/pdb,
+  drift report + npz.
+- `remd/` and `analysis/remd.py` are **not** imported by the top-level/`analysis`
+  `__init__` (they need the `[remd]` extra); import them explicitly. `config.py` +
+  `ladder.py` stay OpenMM-free.
+- Tests: `test_remd_ladder.py` (3, pure), `test_remd_config.py` (7, pure),
+  `test_remd.py` (2, slow: prepare+run+analyze+demux on helix_fusion, CPU). Full suite
+  now **60 non-slow + 10 slow**; all green (slow on CPU). Two new gotchas found
+  (`read_mixing_statistics` per-iteration shape; mdtraj float32 box) — see GOTCHAS.
+
+---
+
 ## 2026-10-01 — knowledgebase seeded
 
 - Started the package. Repo currently holds only `CLAUDE.md`, `README.md`,

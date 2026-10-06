@@ -9,6 +9,50 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-10-06 — T-REMD: NVT production + de-multiplex to fixed-T ensembles
+
+**Decision.** The T-REMD backend runs **NVT** production, uses a **geometric**
+temperature ladder, and the analysis **de-multiplexes** replica trajectories into
+fixed-temperature ensembles before measuring anything.
+
+**Why NVT.** `prepare()` already equilibrates the box to the target density under NPT;
+production then holds that volume fixed. Replica exchange over temperature only (one
+`ThermodynamicState` per rung) is the clean T-REMD formulation — a barostat per replica
+would make the exchange acceptance depend on volume work and complicate the weights for
+no benefit to the stability/variant-comparison objectives. So production strips the
+barostat (`_nvt_system`). *Rejected:* NPT-REMD (unnecessary here; volume held is fine
+once density is equilibrated).
+
+**Why geometric ladder.** For roughly constant heat capacity, equal temperature ratios
+give roughly equal neighbour exchange-acceptance — the right target, since one weak
+("broken") link stalls replica diffusion through temperature space. It is a *starting*
+ladder; `n_replicas` is tuned from the measured per-neighbour acceptance. *Rejected:*
+hand-tuned/optimized ladders up front (premature; `np.geomspace` + a diagnostics plot
+is enough to iterate).
+
+**The critical concept (CLAUDE.md), resolved.** A NetCDF reporter stores **replica**
+trajectories — continuous coordinate sets that *walk through temperature space* as
+swaps reassign their state. A single replica's frames are NOT an ensemble at one
+temperature. To characterize the design at its reference temperature you must
+**de-multiplex**: at each iteration take the replica currently in the target state.
+`analysis/remd.demux_state(k)` does this (from checkpointed frames); only the demuxed
+T_min ensemble feeds RMSD/Rg/RMSF (via the shared `analysis/drift.drift_report`
+primitive, reused by plain MD too). `exchange_diagnostics` reports the permutation +
+neighbour acceptance + openmmtools' mixing statistics (transition-matrix subdominant
+eigenvalue + statistical inefficiency — the library metric, not a hand-rolled round-trip
+counter) so the mixing is auditable. This is the distinction the CLAUDE.md "critical
+REMD/REST2 concept" demands be made explicit.
+
+**Per-replica equilibration.** `sampler.equilibrate(n)` runs each replica at its own
+temperature and is discarded — the designed replacement for the dropped shared-reference
+`relax` (TODO item), so no rung starts production out of equilibrium at its own T.
+
+**Gating.** `remd/` + `analysis/remd.py` require the `[remd]` extra (`openmmtools`) and
+are not eagerly imported by the package `__init__`s; `config.py`/`ladder.py` stay
+OpenMM-free so configs/ladders build on any node.
+
+---
+
 ## 2026-10-01 — design validated against OpenMM docs/cookbook
 
 **Decision.** Keep the architecture as sketched; confirmed it matches OpenMM's own

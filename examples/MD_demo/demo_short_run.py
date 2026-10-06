@@ -7,7 +7,7 @@ from pathlib import Path
 from openmm_pipelines import MDConfig, ProteinFF, WaterModel, analysis, md, prepare
 
 HERE = Path(__file__).parent
-STRUCT = HERE / "input_structures" / "helix_fusion.pdb"
+STRUCT = HERE.parent / "input_structures" / "helix_fusion.pdb"  # shared across demos
 
 
 def main() -> None:

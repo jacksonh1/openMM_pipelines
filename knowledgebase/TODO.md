@@ -45,13 +45,16 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 ## Open design decisions
 
 - [ ] **Output contract** — what files `prepare()` / `run()` write, layout, naming. Topology output settled (needed for reload + analysis); the rest deferred to a dedicated discussion.
-- [ ] REMD production ensemble default: NVT or NPT?
-- [ ] REMD/REST2 backend home: now per-engine folders inside this package; confirm `[remd]` extra gates the openmmtools import.
-- [ ] `analysis/remd.py` single module vs nested `analysis/remd/` — keep one module until it grows.
+- [x] REMD production ensemble default: **NVT** (decided 2026-10-06; see DECISIONS).
+- [x] REMD/REST2 backend home: per-engine folders; `[remd]` extra gates the openmmtools import and `remd/`+`analysis/remd.py` are not eagerly imported. (2026-10-06)
+- [x] `analysis/remd.py` single module (not nested) — kept one module. (2026-10-06)
 
 ## Future backends (designed-for, not built)
 
-- [ ] `remd.py` + `ladder.py` — T-REMD via openmmtools multistate.
-- [ ] **Per-replica equilibration** in REMD/REST2 backends (replaces the dropped `relax`) — each replica equilibrates at its own T/λ before collecting, via the multistate sampler (e.g. `REMDConfig.equilibration_iterations` or run-and-discard), NOT a shared reference-T relax.
+- [x] `remd.py` + `ladder.py` — T-REMD via openmmtools multistate `ReplicaExchangeSampler`, NVT, geometric ladder. (2026-10-06)
+- [x] **Per-replica equilibration** in REMD — `sampler.equilibrate()` (discarded) at each replica's own T; `REMDConfig.equilibration_ns`. (2026-10-06)
+- [x] REMD analysis — exchange acceptance, round-trip mixing, de-multiplex to fixed-T ensembles (`analysis/remd.py`, reads the `.nc`). (2026-10-06)
+- [ ] REST2 production ensemble default (NVT, by analogy to REMD?) — confirm when built.
 - [ ] `rest2.py` — solute λ-scaling (the one genuinely involved piece); CMAP safety gate.
-- [ ] REMD analysis — exchange acceptance, round-trip mixing (read the `.nc` reporter).
+- [ ] REMD: expose demux of **all** rungs (not just the reference state) if multi-T ensembles are wanted; currently `demux_state(k)` per call, `analyze_remd` does the T_min rung.
+- [ ] REMD: per-neighbour-acceptance-driven ladder auto-tuning (iterate `n_replicas` from diagnostics) — currently manual.

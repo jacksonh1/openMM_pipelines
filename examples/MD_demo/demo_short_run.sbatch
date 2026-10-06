@@ -1,7 +1,7 @@
 #!/bin/bash
 # Short end-to-end demo of prepare() + md.run() on a GPU.
-#   sbatch -w node3620 examples/demo_short_run.sbatch     # submit from the repo root
-#SBATCH -p pi_keating
+#   cd examples/MD_demo && sbatch demo_short_run.sbatch     # submit from this folder
+#SBATCH -p mit_normal_gpu
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 4
