@@ -19,32 +19,17 @@ import time
 from pathlib import Path
 
 import numpy as np
-from openmm import MonteCarloBarostat, Platform, System, XmlSerializer, unit
-from openmmtools import cache, mcmc, states
+from openmm import unit
+from openmmtools import mcmc, states
 from openmmtools.multistate import MultiStateReporter, ReplicaExchangeSampler
 
+from ..context_cache import configure_global_platform
+from ..exchange import neighbor_acceptance
+from ..lib.system_edits import strip_barostats
 from ..reports import REMDRunReport, write_json
 from .ladder import geometric_ladder
 
-_GPU_PLATFORMS = ("CUDA", "OpenCL", "HIP")
 _NC = "remd.nc"
-
-
-def _nvt_system(system: System) -> System:
-    """An independent copy of `system` with every MonteCarloBarostat removed.
-
-    Round-trips through the serializer to avoid mutating the shared `eq.system`, then
-    drops barostats so production samples NVT at the equilibrated box volume.
-    """
-    copy = XmlSerializer.deserialize(XmlSerializer.serialize(system))
-    # Remove from the back so indices stay valid while deleting.
-    for i in reversed(range(copy.getNumForces())):
-        if isinstance(copy.getForce(i), MonteCarloBarostat):
-            copy.removeForce(i)
-    assert not any(
-        isinstance(copy.getForce(i), MonteCarloBarostat) for i in range(copy.getNumForces())
-    ), "barostat still present after strip — NVT production needs it gone"
-    return copy
 
 
 def _ladder(cfg) -> list[float]:
@@ -57,15 +42,12 @@ def run(eq, cfg) -> Path:
     outdir = cfg.outdir / "remd"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # openmmtools picks the compute platform off its global context cache, not per-call.
-    platform = Platform.getPlatformByName(cfg.platform)
-    props = {"Precision": "mixed"} if cfg.platform in _GPU_PLATFORMS else None
-    cache.global_context_cache.set_platform(platform, props)
+    configure_global_platform(cfg.platform)
 
     temperatures = _ladder(cfg)
     write_json({"temperatures_k": temperatures}, outdir / "ladder.json")
 
-    system = _nvt_system(eq.system)
+    system = strip_barostats(eq.system)
     thermo_states = [
         states.ThermodynamicState(system=system, temperature=t * unit.kelvin)
         for t in temperatures
@@ -107,26 +89,6 @@ def run(eq, cfg) -> Path:
     return outdir
 
 
-def _mean_neighbor_acceptance(reporter: MultiStateReporter) -> float:
-    """Mean exchange-acceptance over adjacent ladder rungs (i <-> i+1).
-
-    A healthy ladder keeps every neighbour pair swapping; a near-zero rung is a broken
-    link that stops replicas diffusing through temperature space.
-    """
-    # read_mixing_statistics returns per-iteration matrices (n_iter, n_states, n_states);
-    # sum over iterations for the cumulative accepted/proposed counts.
-    n_accepted, n_proposed = reporter.read_mixing_statistics()
-    n_accepted = np.asarray(n_accepted, dtype=float).sum(axis=0)
-    n_proposed = np.asarray(n_proposed, dtype=float).sum(axis=0)
-    neighbor = [
-        n_accepted[i, i + 1] / n_proposed[i, i + 1]
-        for i in range(n_accepted.shape[0] - 1)
-        if n_proposed[i, i + 1] > 0
-    ]
-    assert neighbor, "no neighbour exchanges were proposed — mixing statistics empty"
-    return float(np.mean(neighbor))
-
-
 def _run_report(reporter, cfg, temperatures, wall_seconds) -> REMDRunReport:
     n_replicas = len(temperatures)
     aggregate_ns = cfg.total_ns * n_replicas
@@ -138,7 +100,7 @@ def _run_report(reporter, cfg, temperatures, wall_seconds) -> REMDRunReport:
         exchange_attempt_ps=cfg.exchange_attempt_ps,
         total_ns_per_replica=cfg.total_ns,
         replica_mixing_scheme=cfg.replica_mixing_scheme,
-        mean_neighbor_acceptance=_mean_neighbor_acceptance(reporter),
+        mean_neighbor_acceptance=float(np.mean(neighbor_acceptance(reporter))),
         wall_seconds=wall_seconds,
         aggregate_ns_per_day=(
             aggregate_ns / (wall_seconds / 86_400.0) if wall_seconds > 0 else 0.0

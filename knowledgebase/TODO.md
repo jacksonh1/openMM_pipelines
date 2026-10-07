@@ -54,7 +54,10 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [x] `remd.py` + `ladder.py` — T-REMD via openmmtools multistate `ReplicaExchangeSampler`, NVT, geometric ladder. (2026-10-06)
 - [x] **Per-replica equilibration** in REMD — `sampler.equilibrate()` (discarded) at each replica's own T; `REMDConfig.equilibration_ns`. (2026-10-06)
 - [x] REMD analysis — exchange acceptance, round-trip mixing, de-multiplex to fixed-T ensembles (`analysis/remd.py`, reads the `.nc`). (2026-10-06)
-- [ ] REST2 production ensemble default (NVT, by analogy to REMD?) — confirm when built.
-- [ ] `rest2.py` — solute λ-scaling (the one genuinely involved piece); CMAP safety gate.
-- [ ] REMD: expose demux of **all** rungs (not just the reference state) if multi-T ensembles are wanted; currently `demux_state(k)` per call, `analyze_remd` does the T_min rung.
+- [x] **REST2 backend** — `rest2/` (scaling + ladder + config + production) + `analysis/rest2.py`, path A. Solute scaling verified on a real system. (2026-10-06; plan `plans/rest2-kickoff.md`)
+- [x] REST2 production ensemble default: **NVT** (by analogy to REMD; barostat stripped). (2026-10-06)
+- [x] `rest2/scaling.py` — solute λ-scaling (√λ charge, λ·ε, λ bonded) + exception rescale + CMAP safety gate + released-restraint gate. (2026-10-06)
+- [ ] **CHARMM REST2** — `scale_solute` refuses CHARMM's `Custom{Nonbonded,Bond,Torsion}Force` (NBFIX LJ / impropers). Implement their scaling (and tie to the FF energy-match tool) before any CHARMM REST2 campaign. AMBER works today.
+- [ ] REST2: 1-4 (scaled exception) handling under charge/ε scaling is done via combining rules — cross-check against a per-force-group energy decomposition on a real system (open item from the kickoff note).
+- [ ] REMD/REST2: expose demux of **all** rungs (not just the reference state) if multi-state ensembles are wanted; currently `demux_state(k)` per call, `analyze_*` does the reference rung. (shared `analysis/multistate.py`)
 - [ ] REMD: per-neighbour-acceptance-driven ladder auto-tuning (iterate `n_replicas` from diagnostics) — currently manual.

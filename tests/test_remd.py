@@ -69,6 +69,7 @@ def test_analyze_demuxes_reference_state(remd_run):
     assert summary["reference_state"] == 0
     assert summary["n_frames_demuxed"] >= 1
     assert summary["rmsd_to_design_ang"]["mean"] >= 0.0
+    assert summary["n_clusters"] >= 1  # T_min ensemble clustered (Cα-RMSD)
 
     assert (adir / "state00_ensemble.xtc").exists()
     assert (adir / "acceptance.png").exists()

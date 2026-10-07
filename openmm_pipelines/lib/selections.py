@@ -19,6 +19,28 @@ _PROTEIN_RESIDUES = frozenset(
 )
 
 
+def protein_atoms(topology, chain_index: int | None = None) -> list[int]:
+    """Indices of ALL protein atoms (hydrogens included) — the REST2 solute selection.
+
+    REST2 scales the solute Hamiltonian, so hydrogens must be in the set (their charges /
+    LJ / bonded terms are part of the solute interactions). `chain_index` restricts the
+    solute to one chain (e.g. temper only the peptide in a binder complex); None = whole
+    protein. Fails loud on an empty selection (wrong residue naming, bad chain index, or a
+    non-protein input).
+    """
+    indices = [
+        atom.index
+        for atom in topology.atoms()
+        if atom.residue.name in _PROTEIN_RESIDUES
+        and (chain_index is None or atom.residue.chain.index == chain_index)
+    ]
+    assert indices, (
+        f"protein_atoms selected no atoms (chain_index={chain_index}) — no standard "
+        "protein residues found (check residue naming / chain index)"
+    )
+    return indices
+
+
 def protein_heavy_atoms(topology) -> list[int]:
     """Indices of protein heavy atoms (element present and not hydrogen).
 

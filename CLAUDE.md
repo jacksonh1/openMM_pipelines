@@ -59,7 +59,14 @@ flexibility).
 
 ### Critical REMD/REST2 concept
 
-figure out whether trajectories are single coordinate sets moving through temperature space or whether they are thermodynamic ensembles at fixed temperatures
+**Resolved:** openmmtools stores **walkers** (it calls them "replicas") — continuous
+coordinate sets that move *through* state space as swaps reassign their thermodynamic state.
+The `.nc` trajectories are NOT fixed-T ensembles. `read_sampler_states(it)` is indexed by
+walker; `read_replica_thermodynamic_states()[it, walker]` is the walker→slot permutation. To
+get a fixed-slot (constant-T / fixed-λ) ensemble you **demux**: per iteration, pick the walker
+occupying the target slot. Only slot 0 (T_min for REMD, λ=1 for REST2) is a real Boltzmann
+sample at the design condition — the only one that feeds RMSD/Rg/RMSF/clustering. See
+`analysis/multistate.py` (`demux_state`) and its module docstring.
 
 ---
 
@@ -143,3 +150,5 @@ caused a failure — add its detail to `GOTCHAS.md` immediately AND add a one-li
 - **A new Context resets globals to the force DEFAULT** — `context.setParameter("k",0)` only affects that context; a fresh production context re-enables restraints at full strength. Bake release into the System with `force.setGlobalParameterDefaultValue(idx, 0.0)` (done in `prepare()`).
 - **openmmtools `read_mixing_statistics()` returns PER-ITERATION matrices** — default shape is `(n_iter, n_states, n_states)`, not the documented `(n_states, n_states)`; `.sum(axis=0)` for cumulative acceptance before indexing, or it crashes on the ambiguous-truth-value comparison.
 - **mdtraj Trajectory needs float32 xyz/box and takes no `unitcell_vectors` kwarg** — build from de-multiplexed REMD coords with `dtype=np.float32` and set the box via the `traj.unitcell_vectors` attribute; float64 makes `image_molecules` raise `Buffer dtype mismatch`.
+- **An OpenMM Force proxy from a temporary System reads freed memory** — `make_system().getForce(i)` lets the System get GC'd while the SWIG proxy still points at it; reads return garbage denormals or raise `std::bad_alloc`. Bind the System to a variable (`s = make_system(); s.getForce(i)`).
+- **openmmtools' global context cache can't be re-platformed once populated** — a 2nd multistate `run()` in one process hits `RuntimeError: Cannot change platform of a Context cache already in use` (even for the same platform); `cache.global_context_cache.empty()` before `set_platform` (done in `context_cache.configure_global_platform`).

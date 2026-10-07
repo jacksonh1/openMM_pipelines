@@ -215,3 +215,39 @@ FAILED.
 `exit 0` / trailing `true`.
 
 **Status.** Inherited from the sibling GROMACS pipeline; no shell drivers here yet.
+
+---
+
+## An OpenMM Force proxy from a temporary System reads freed memory
+
+**Trigger.** `scaled = scale_solute(system, ...)` then inspecting a force — written as the
+one-liner `scale_solute(system, ...).getForce(0)` (or any `make_system().getForce(i)`).
+
+**What goes wrong.** `System.getForce(i)` returns a SWIG proxy that only *references* the
+C++ System; it does not keep it alive. If the System has no surviving Python reference, it
+is garbage-collected while the proxy is still in use, so reads hit freed memory —
+`getParticleParameters` returns garbage denormals (e.g. `4.67e-310`) or `getMapParameters`
+raises `OpenMMException: std::bad_alloc`. Bit it silently *looks* like a scaling bug.
+
+**Fix.** Bind the System to a variable that outlives every proxy taken from it:
+`scaled = scale_solute(...); nb = scaled.getForce(0)`. Not REST2-specific — any transient
+OpenMM container (System/Force/Context) whose child proxy outlives it. Surfaced writing the
+`scale_solute` tests (2026-10-06).
+
+---
+
+## openmmtools' global context cache cannot be re-platformed once populated — `run()` must empty it
+
+**Trigger.** Calling a multistate `run()` (`remd`/`rest2`) twice in one process — a driver
+that runs two backends, or the test suite running both slow multistate tests.
+
+**What goes wrong.** openmmtools reads the compute platform off its *global* context cache,
+and `cache.global_context_cache.set_platform(...)` raises `RuntimeError: Cannot change
+platform of a Context cache already in use` once the cache holds any context — even when
+setting the *same* platform. So a second `run()` in the process crashes, regardless of
+platform.
+
+**Fix.** `cache.global_context_cache.empty()` before `set_platform` makes the setup
+idempotent (and frees the prior run's cached contexts). Centralized in
+`openmm_pipelines/context_cache.configure_global_platform`, used by both backends.
+Surfaced 2026-10-07 when a second multistate slow test (REST2) was added alongside REMD.

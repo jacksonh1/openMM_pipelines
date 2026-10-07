@@ -152,3 +152,31 @@ class REMDRunReport:
     aggregate_ns_per_day: float
     platform: str
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class REST2RunReport:
+    """QC from a REST2 production run.
+
+    Like REMD, the health check is *mixing* (`mean_neighbor_acceptance` over adjacent λ
+    rungs), not single-trajectory stability. REST2-specific: every replica is at the same
+    physical `temperature_k`; the ladder is reported as both the solute-scaling factors
+    `lambdas` (λ[0]=1 = the reference, unscaled ensemble) and the `effective_temperatures_k`
+    they correspond to. `n_solute_atoms` records how much of the system was tempered.
+    """
+
+    n_replicas: int
+    temperature_k: float  # physical temperature all replicas run at
+    lambdas: list[float]
+    effective_temperatures_k: list[float]
+    n_solute_atoms: int
+    n_iterations: int
+    steps_per_iteration: int
+    exchange_attempt_ps: float
+    total_ns_per_replica: float
+    replica_mixing_scheme: str
+    mean_neighbor_acceptance: float
+    wall_seconds: float
+    aggregate_ns_per_day: float
+    platform: str
+    notes: list[str] = field(default_factory=list)

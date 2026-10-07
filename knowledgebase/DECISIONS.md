@@ -9,6 +9,53 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-10-06 — REST2: pre-scaled Systems (path A), fail-loud FF support, released-restraint gate
+
+**Decision.** REST2 scales the solute force-field terms into **N independent pre-scaled
+Systems** (one per λ), each a plain `ThermodynamicState` at the shared physical T_0
+(kickoff-note "path A"). `scale_solute` handles the **AMBER force set + CMAP** and
+**refuses** any other force touching the solute. Production is **NVT**, same as T-REMD.
+
+**Why path A over CompoundThermodynamicState.** Path A matches the existing `_nvt_system`
+shape and makes scaling a pure, energy-testable primitive (`scale_solute(system, indices,
+lam) -> System`), validated by a λ=1 energy identity + direct parameter checks. Cost is N
+Systems in memory, fine at our replica counts (REST2's whole point is *few* replicas).
+*Rejected (for now):* `GlobalParameterState` + `CompoundThermodynamicState` (the scalable
+"openmmtools way", one System with a λ global parameter) — more upfront force-authoring; a
+later refactor if memory ever bites. openmmtools ships **no** turnkey REST2; `alchemy` is
+for free-energy, not this.
+
+**Why fail loud on non-AMBER forces.** The combining-rule trick (charge→√λ, ε→λ) gives the
+correct solute-solute (∝λ) / solute-solvent (∝√λ) scaling *only* for a plain
+`NonbondedForce`. CHARMM36(m) builds LJ as `CustomNonbondedForce`+`CustomBondForce` (NBFIX)
+and impropers as `CustomTorsionForce`; scaling those correctly is real work. Rather than
+silently mis-scale (the exact "looks plausible but wrong" failure the project forbids),
+`scale_solute` raises `NotImplementedError` on any unrecognized solute force. AMBER REST2
+works today; CHARMM REST2 is an explicit TODO. The **CMAP safety gate** is the same spirit:
+CMAP maps are shared across torsions, so scaling them is allowed only after asserting every
+CMAP torsion lies inside the solute (else a one-chain solute would wrongly temper the rest).
+
+**Released-restraint gate.** `prepare()` bakes the position restraint released (global
+`k`=0) into the handed-off System, so a `CustomExternalForce` is present in production. It
+is an *external* restraint, not a force-field solute term, so it is **not** λ-scaled — but
+`scale_solute` asserts it is released (all global-parameter defaults 0) before carrying it,
+because an active restraint under REST2 would bias every replica identically. *Rejected:*
+blindly ignoring any `CustomExternalForce` (would hide an accidentally-live restraint).
+
+**Shared config base + factored primitives.** `REMDConfig`/`REST2Config` now subclass
+`MultiStateProductionConfig(PrepConfig)` (shared production/exchange fields + derived
+iteration counts); the barostat strip moved to `lib/system_edits.strip_barostats`; the
+exchange/demux analysis moved to `analysis/multistate.py` with `remd.py`/`rest2.py` as thin
+subdir+`.nc` wrappers. Decompose eagerly — one primitive each, composed by both engines.
+
+**λ ladder = T_0/T_eff on a geometric effective-T ladder.** State 0 is λ=1 (the unscaled,
+physical ensemble — the only REST2 rung that is a real Boltzmann sample at the design
+temperature, and the one analysis demuxes). Reuses the T-REMD geometric ladder on effective
+temperatures. *Verified:* solute scaling checked on a real solvated AMBER system in
+`test_rest2.py` (protein atom √λ·q/λ·ε; water byte-identical).
+
+---
+
 ## 2026-10-06 — T-REMD: NVT production + de-multiplex to fixed-T ensembles
 
 **Decision.** The T-REMD backend runs **NVT** production, uses a **geometric**

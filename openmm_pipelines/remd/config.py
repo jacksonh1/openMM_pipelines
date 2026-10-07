@@ -1,23 +1,19 @@
-"""REMDConfig — T-REMD production. Adds replica-exchange fields to the shared PrepConfig.
+"""REMDConfig — T-REMD production over a geometric temperature ladder (NVT).
 
 Pure Python (no OpenMM / openmmtools import) so construction + validation run anywhere.
 The base `temperature_k` is the ladder's **minimum** (= the reference / equilibration
-temperature); the ladder runs from there up to `max_temperature_k`.
-
-openmmtools runs in **iterations**: one iteration = `steps_per_iteration` MD steps at
-each replica's own temperature, then one exchange-attempt sweep. So production length
-is expressed as a per-replica wall of MD time (`total_ns`) plus the MD time between
-exchange attempts (`exchange_attempt_ps`), and the iteration counts derive from those.
+temperature); the ladder runs from there up to `max_temperature_k`. Production / exchange
+fields and the derived iteration counts come from `MultiStateProductionConfig`.
 """
 
 from __future__ import annotations
 
 from pydantic import model_validator
 
-from ..config import PrepConfig
+from ..config import MultiStateProductionConfig
 
 
-class REMDConfig(PrepConfig):
+class REMDConfig(MultiStateProductionConfig):
     """T-REMD production over a geometric temperature ladder (NVT)."""
 
     # --- temperature ladder ---
@@ -27,14 +23,8 @@ class REMDConfig(PrepConfig):
     n_replicas: int = 12
     temperatures_k: tuple[float, ...] | None = None  # explicit ladder overrides min/max/n
 
-    # --- production (per replica) ---
-    total_ns: float = 20.0  # MD time collected per replica
-    exchange_attempt_ps: float = 1.0  # MD time per iteration (between exchange attempts)
-    equilibration_ns: float = 0.5  # per-replica equilibration at its own T, discarded
-
-    # --- replica exchange ---
-    replica_mixing_scheme: str = "swap-all"  # openmmtools: 'swap-all' | 'swap-neighbors'
-    checkpoint_ps: float = 100.0  # full-state checkpoint interval (restart granularity)
+    # Per-replica equilibration default (at each rung's own temperature, discarded).
+    equilibration_ns: float = 0.5
 
     @model_validator(mode="after")
     def _check_remd(self) -> "REMDConfig":
@@ -53,21 +43,4 @@ class REMDConfig(PrepConfig):
                 f"max_temperature_k ({self.max_temperature_k}) must exceed temperature_k "
                 f"({self.temperature_k})"
             )
-        assert self.exchange_attempt_ps > 0, "exchange_attempt_ps must be > 0"
         return self
-
-    @property
-    def steps_per_iteration(self) -> int:
-        return round(self.exchange_attempt_ps / self.dt_ps)
-
-    @property
-    def n_iterations(self) -> int:
-        return round(self.total_ns * 1000 / self.exchange_attempt_ps)
-
-    @property
-    def equilibration_iterations(self) -> int:
-        return round(self.equilibration_ns * 1000 / self.exchange_attempt_ps)
-
-    @property
-    def checkpoint_interval_iterations(self) -> int:
-        return max(round(self.checkpoint_ps / self.exchange_attempt_ps), 1)

@@ -5,6 +5,80 @@ factual.
 
 ---
 
+## 2026-10-07 — REST2 review pass: decompose/parameterize cleanup + re-entrancy fix
+
+Reviewed the REST2 work against the project principles (simple single-purpose primitives;
+decompose eagerly, parameterize lazily; don't hand-roll standard algorithms):
+- **Removed a dead parameter** — `cluster_cutoff_ang` was threaded through
+  `analyze_multistate`/`analyze_remd`/`analyze_rest2` but never used there (pre-existing in
+  remd; I'd propagated it). Dropped from that chain (`analysis.analyze` still uses it).
+- **De-duplicated neighbour-acceptance** — identical `_mean_neighbor_acceptance` in both
+  `remd`/`rest2` production + the same per-iteration-sum in `analysis/multistate` → one
+  primitive `exchange.neighbor_acceptance(reporter)` (the `read_mixing_statistics` axis-0 sum
+  gotcha now lives in exactly one place).
+- **Inlined** the needless `effective_temperature_ladder` one-line wrapper.
+- **Tested the solute-chain knob** — kept `REST2Config.solute_chain_index` (core to binder
+  campaigns, per the kickoff note — not speculative) but it was unexercised; added
+  `test_selections.py` (whole protein / per-chain / H-included / water-excluded).
+- **Fixed `run()` re-entrancy** (latent bug the 2nd multistate slow test exposed):
+  openmmtools' global context cache refuses `set_platform` once populated, so a 2nd `run()`
+  in one process crashed (also broke `python -m pytest -q`). Factored the platform setup into
+  `context_cache.configure_global_platform`, which `empty()`s the cache first. New GOTCHAS
+  entry. No new dependencies (reviewed: `np.geomspace` + numpy sums, nothing hand-rolled).
+- Suite: 84 fast + 5 slow (both multistate tests now coexist in one process).
+- **Added conformational clustering** of the demuxed slot-0 ensemble (T_min for REMD, λ=1
+  for REST2) to `analyze_multistate` — `cluster_cutoff_ang` is now live (Cα-RMSD average-link
+  via `analysis/clustering`, mirroring plain-MD `analyze`); `n_clusters`/`cluster_cutoff_ang`
+  in the summary, `cluster_labels` in the npz. User wants clusters of the lowest slot, which
+  is exactly the demuxed reference ensemble (a real Boltzmann sample at the design condition —
+  the only slot that is, since the raw `.nc` stores walkers that move through state space).
+- **Demuxed `state00_ensemble.xtc` is now fully processed**: PBC-imaged (demux) + desolvated +
+  aligned-to-design + **origin-centered** (frame-0 centroid → origin), matching plain-MD's
+  processed copy. Centering is translation-only; `md.rmsd` superposes internally and Rg/RMSF/
+  clustering are translation-invariant, so metrics are unaffected. Folded into the one ensemble
+  file (not a separate one) — the "keep raw" concern is the primary sim output (the `.nc`),
+  which analysis only ever opens `open_mode="r"`.
+
+---
+
+## 2026-10-06 — REST2 backend built end to end
+
+- Built the **REST2** engine behind the prepare/produce seam (`rest2/`) + its analysis,
+  following `plans/rest2-kickoff.md` path A (N pre-scaled Systems, one plain
+  `ThermodynamicState` at the shared physical T_0 per replica). `prepare()` reused
+  unchanged.
+- **`rest2/scaling.py::scale_solute(system, solute_indices, lam)`** — the one genuinely new
+  piece. Returns an independent scaled copy: solute charge→√λ·q, LJ ε→λ·ε (σ fixed),
+  solute-only bonded k→λ·k, CMAP maps→λ. NonbondedForce **exceptions** rescaled explicitly
+  (OpenMM stores combined chargeProd/ε; solute-solute→λ, cross→√λ via the same combining
+  rules). λ=1 is a verified energy identity.
+- **Fail-loud force-field support.** Handles the AMBER force set + CMAP. **Refuses**
+  (`NotImplementedError`) any unrecognized force with solute atoms — so CHARMM's
+  `Custom{Nonbonded,Bond,Torsion}Force` (NBFIX LJ / impropers) is NOT silently mis-scaled;
+  CHARMM REST2 is deferred (see TODO). The pipeline's released position restraint
+  (`CustomExternalForce`, k=0) is carried through but **asserted released** first — an
+  active restraint under REST2 would bias every replica.
+- **λ ladder** (`rest2/ladder.py`): geometric in *effective* temperature [T_0, T_max_eff]
+  (reuses `remd.ladder.geometric_ladder`), then λ_m = T_0/T_m. State 0 = λ=1 = the unscaled
+  physical ensemble. Config `REST2Config` has `max_effective_temperature_k` / `n_replicas`
+  (or explicit `lambdas`) + `solute_chain_index` (temper a single chain for binder work).
+- **Shared base `MultiStateProductionConfig(PrepConfig)`** in `config.py` now holds the
+  production/exchange fields + derived iteration-count properties; both `REMDConfig` and
+  `REST2Config` subclass it (killed the duplication). `remd/production._nvt_system` factored
+  into `lib/system_edits.strip_barostats` (+ `clone_system`), reused by rest2.
+- **Analysis factored**: `analysis/multistate.py` holds the shared exchange-diagnostics +
+  de-multiplex core; `analysis/remd.py` and new `analysis/rest2.py` are thin wrappers pinning
+  the subdir + `.nc` name. Demux of state 0 gives the fixed-λ (=1) reference ensemble.
+- **Solute scaling verified in a real run** (the user's explicit ask): `test_rest2.py`
+  prepares a real solvated AMBER system and asserts a protein atom gets √λ·q / λ·ε while a
+  water atom is byte-identical — not just inferred. Full suite green: 93 fast + 3 rest2 slow
+  + 2 remd slow (CPU). New gotcha recorded: a Force proxy from a temporary System reads freed
+  memory (caused garbage/`std::bad_alloc` in the first scaling tests).
+- Added `examples/REST2_demo/demo_rest2.py` — 6 rungs over an effective 300→450 K (contrast
+  the 14-rung T-REMD demo over 300–360 K; that contrast is the showcase).
+
+---
+
 ## 2026-10-06 — T-REMD backend built end to end
 
 - Built the **T-REMD** engine behind the prepare/produce seam (`remd/`) + its analysis
@@ -33,6 +107,20 @@ factual.
   4-plots + summary block shared by `analyze` (plain MD) and `analyze_remd`; both now
   compose it (was duplicated). Fixed a mislabel: demuxed-ensemble x-axis is "demuxed
   frame", not "time (ps)" (`plot_timeseries`/`plot_ss_fractions` took an `xlabel` param).
+- **GPU showcase + examples reorg.** Split `examples/` into per-engine `MD_demo/` +
+  `REMD_demo/` (shared `input_structures/`); sbatch partition → `mit_normal_gpu`. First
+  REMD demo (4 rungs, 300–360 K, 5.4k-atom box) showed **zero exchange** — correctly: it
+  is the explicit-solvent √DOF scaling wall (acceptance ~1e-7 at ΔT≈19 K), and the QC
+  (mean acceptance 0, subdominant eigenvalue 1.0, statistical inefficiency ≈ n_iter)
+  flagged it. Re-ran with 14 rungs (~6 K gaps): **mean neighbour acceptance 0.33**, all
+  pairs 0.23–0.41 (uniform → geometric ladder validated), eigenvalue 1.0→0.985. Engine +
+  QC + example all validated on GPU.
+- **REST2 handoff written** — `plans/rest2-kickoff.md`: what carries over from T-REMD, the
+  solute λ-scaling math (charges·√λ, ε·λ, bonded+CMAP·λ; CMAP safety gate), the two
+  implementation paths (pre-scaled Systems first; `CompoundThermodynamicState`+
+  `GlobalParameterState` later — openmmtools ships no turnkey REST, `alchemy` is for
+  free-energy not REST), config/ladder, open decisions, first steps. REST2 to be built in
+  a fresh session starting from that note.
 - Output contract: `outdir/remd/` → remd.nc (+ checkpoint), ladder.json, run_report.json
   (`REMDRunReport`: mean neighbour acceptance etc.); `outdir/remd/analysis/` →
   exchange_report.json, acceptance.png, replica_walk.png, demuxed ensemble xtc/pdb,

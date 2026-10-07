@@ -86,3 +86,43 @@ class PrepConfig(BaseModel, frozen=True):
     @property
     def nvt_equil_steps(self) -> int:
         return round(self.nvt_equil_ns * 1000 / self.dt_ps)
+
+
+class MultiStateProductionConfig(PrepConfig):
+    """Shared production fields for the openmmtools multistate backends (REMD / REST2).
+
+    openmmtools runs in **iterations**: one iteration = `steps_per_iteration` MD steps per
+    replica then one exchange-attempt sweep. Production length is a per-replica MD-time wall
+    (`total_ns`) plus the MD time between exchange attempts (`exchange_attempt_ps`); the
+    iteration counts derive from those. Ladder specifics live in the engine subclasses.
+    """
+
+    # --- production (per replica) ---
+    total_ns: float = 20.0  # MD time collected per replica
+    exchange_attempt_ps: float = 1.0  # MD time per iteration (between exchange attempts)
+    equilibration_ns: float = 0.5  # per-replica equilibration, discarded
+
+    # --- replica exchange ---
+    replica_mixing_scheme: str = "swap-all"  # openmmtools: 'swap-all' | 'swap-neighbors'
+    checkpoint_ps: float = 100.0  # full-state checkpoint interval (restart granularity)
+
+    @model_validator(mode="after")
+    def _check_multistate(self) -> "MultiStateProductionConfig":
+        assert self.exchange_attempt_ps > 0, "exchange_attempt_ps must be > 0"
+        return self
+
+    @property
+    def steps_per_iteration(self) -> int:
+        return round(self.exchange_attempt_ps / self.dt_ps)
+
+    @property
+    def n_iterations(self) -> int:
+        return round(self.total_ns * 1000 / self.exchange_attempt_ps)
+
+    @property
+    def equilibration_iterations(self) -> int:
+        return round(self.equilibration_ns * 1000 / self.exchange_attempt_ps)
+
+    @property
+    def checkpoint_interval_iterations(self) -> int:
+        return max(round(self.checkpoint_ps / self.exchange_attempt_ps), 1)

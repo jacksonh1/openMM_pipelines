@@ -16,7 +16,7 @@ state; the input pose is the analysis reference.
 
 It is a `tools/` library — same tier as `snekwrap` and `FragForge` — imported by
 campaigns via `import openmm_pipelines`. Scope now is **plain production MD** and
-**T-REMD** (both built); REST2 is designed-for but not built.
+**T-REMD**, and **REST2** — all three built behind one prepare/produce seam.
 
 ## The central idea: the prepare/produce seam
 
@@ -30,8 +30,8 @@ prepare(cfg) ---------------------------> EquilibratedSystem      (SHARED — ~9
                     +------------------------------+------------------------------+
                     v                              v                              v
            md.run(eq, cfg)              remd.run(eq, cfg)              rest2.run(eq, cfg)
-           app.Simulation.step()        multistate.ReplicaExchange     multistate + REST region
-           (this package, now)          (later; imports prepare)       (later; imports prepare)
+           app.Simulation.step()        multistate.ReplicaExchange     N pre-scaled Systems
+           (plain MD)                   (T ladder, NVT)                (solute λ-scaled, NVT)
 ```
 
 `prepare()` returns **plain OpenMM objects** (serialized `System` + a `State` with
@@ -54,13 +54,17 @@ folder per **engine**. `[BUILT]` = exists; everything else is planned.
 ```
 openmm_pipelines/
   __init__.py              # public API
-  config.py                # PrepConfig (base), BoxShape, derived step counts   [BUILT]
+  config.py                # PrepConfig (base), MultiStateProductionConfig, BoxShape  [BUILT]
   forcefield.py            # ProteinFF, WaterModel, NonbondedSpec, resolve(),
                            #   ForceFieldError, registries                      [BUILT]
+  exchange.py              # neighbor_acceptance(reporter): shared multistate mixing primitive [BUILT]
+  context_cache.py         # configure_global_platform: re-entrant openmmtools cache setup     [BUILT]
 
   lib/                     # the toolkit: reusable building blocks (not stages)
     restraints.py          #   add_restraint (global k), reanchor               [BUILT]
     density_convergence.py #   assess_plateau, density_converged (pure math)    [BUILT]
+    selections.py          #   protein_heavy_atoms (restraints), protein_atoms (REST2 solute) [BUILT]
+    system_edits.py        #   clone_system, strip_barostats (NVT; shared by remd+rest2)      [BUILT]
 
   preparation/             # the prepare side of the seam (shared by all engines)
     __init__.py
@@ -80,9 +84,13 @@ openmm_pipelines/
     ladder.py              #   geometric_ladder (np.geomspace)                     [BUILT]
     production.py          #   run(eq, cfg) -> Path (ReplicaExchangeSampler, NVT)  [BUILT]
 
-  rest2/                   # REST2  [SOON; needs [remd] extra]
-    config.py              #   REST2Config(PrepConfig)
-    production.py          #   run(eq, cfg) -> Path  (multistate + solute scaling; CMAP gate)
+  rest2/                   # REST2  [BUILT; needs [remd] extra]
+    config.py              #   REST2Config(MultiStateProductionConfig) (λ ladder, solute_chain_index) [BUILT]
+    ladder.py              #   lambda_ladder: geometric effective-T -> λ = T0/Teff (state 0 = λ=1)   [BUILT]
+    scaling.py             #   scale_solute(system, indices, lam) -> System  (√λ q, λ·ε, λ bonded,    [BUILT]
+                           #     exception rescale, CMAP gate, released-restraint gate; AMBER+CMAP,
+                           #     refuses CHARMM Custom* forces)
+    production.py          #   run(eq, cfg) -> Path  (N pre-scaled Systems, all at physical T0, NVT)  [BUILT]
 
   analysis/                # mdtraj-based, in-package  [BUILT]
     __init__.py            #   analyze(outdir) composer + re-exports
@@ -93,12 +101,16 @@ openmm_pipelines/
     plots.py               #   rmsd / rg / rmsf / dssp PNGs (matplotlib Agg)
     drift.py               #   drift_report: RMSD/Rg/RMSF/SS + plots vs design pose,
                            #     shared primitive used by analyze + analyze_remd         [BUILT]
-    remd.py                #   [BUILT] exchange/mixing diagnostics (openmmtools analyzer)
-                           #     + de-multiplex fixed-T ensembles from the .nc (needs [remd])
+    multistate.py          #   [BUILT] shared REMD/REST2 core: exchange/mixing diagnostics
+                           #     (openmmtools analyzer) + de-multiplex a fixed-state ensemble (needs [remd])
+    remd.py                #   [BUILT] thin wrapper: remd/ + remd.nc, analyze_remd (reference = T_min)
+    rest2.py               #   [BUILT] thin wrapper: rest2/ + rest2.nc, analyze_rest2 (reference = λ=1)
 tests/
   test_forcefield.py (10) · test_config.py (13) · test_density.py (10)   [BUILT, pass]
   test_restraints.py (6) · test_build.py (7) · test_equilibration.py (5, slow) [BUILT, pass]
   test_remd_ladder.py (3) · test_remd_config.py (7) · test_remd.py (2, slow)   [BUILT, pass]
+  test_rest2_scaling.py (15) · test_rest2_config.py (7) · test_rest2.py (3, slow)  [BUILT, pass]
+  test_selections.py (4)   [BUILT, pass]
   gpu_tests.sbatch         # runs the suite on CUDA (-w node3620)
 ```
 
@@ -124,10 +136,12 @@ Package import name is `openmm_pipelines` (underscore) — deliberately **not**
 ## Config shape
 
 Config is split by the same seam: a shared `PrepConfig` base (everything through
-equilibration) and a thin `MDConfig` subclass adding production fields. Future
-`REMDConfig`/`REST2Config` subclass the **same** `PrepConfig`. Inheritance (not
-nesting) keeps attribute access flat — `cfg.temperature_k` works on every engine's
-config — while `prepare()` depends only on `PrepConfig` fields. Pydantic
+equilibration) and a thin `MDConfig` subclass adding production fields. The two
+multistate engines share a further base `MultiStateProductionConfig(PrepConfig)`
+(production/exchange fields + derived iteration counts); `REMDConfig` and `REST2Config`
+subclass **that**. Inheritance (not nesting) keeps attribute access flat —
+`cfg.temperature_k` works on every engine's config — while `prepare()` depends only on
+`PrepConfig` fields. Pydantic
 `BaseModel, frozen=True`; step counts are derived `@property`s off ns + dt.
 
 `temperature_k` is the *reference/equilibration* temperature (= T_min for REMD), so
