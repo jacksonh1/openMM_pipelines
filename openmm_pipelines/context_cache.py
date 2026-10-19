@@ -14,7 +14,7 @@ from __future__ import annotations
 from openmm import Platform
 from openmmtools import cache
 
-_GPU_PLATFORMS = ("CUDA", "OpenCL", "HIP")
+from .lib.platforms import gpu_props, is_gpu
 
 
 def configure_global_platform(platform_name: str) -> None:
@@ -24,6 +24,8 @@ def configure_global_platform(platform_name: str) -> None:
     `set_platform`'s populated-cache guard.
     """
     platform = Platform.getPlatformByName(platform_name)
-    props = {"Precision": "mixed"} if platform_name in _GPU_PLATFORMS else None
+    # None (not {}) on CPU: set_platform's validator short-circuits on None and skips
+    # building a throwaway probe Context.
+    props = gpu_props(platform_name) if is_gpu(platform_name) else None
     cache.global_context_cache.empty()
     cache.global_context_cache.set_platform(platform, props)

@@ -251,3 +251,20 @@ platform.
 idempotent (and frees the prior run's cached contexts). Centralized in
 `openmm_pipelines/context_cache.configure_global_platform`, used by both backends.
 Surfaced 2026-10-07 when a second multistate slow test (REST2) was added alongside REMD.
+
+---
+
+## openmmtools refuses to overwrite an existing `.nc` — a rerun needs a clean outdir
+
+**Trigger.** Re-running `remd.run` / `rest2.run` (or an sbatch demo) into an outdir that
+already holds a completed run's storage file.
+
+**What goes wrong.** `MultiStateSampler.create()` raises
+`RuntimeError: Storage file .../rest2.nc already exists; cowardly refusing to overwrite.`
+(`openmmtools/multistate/multistatesampler.py:589`). This is deliberate data-loss protection
+in the library — the "cowardly refusing" idiom from git/Perl — not a bug in our pipeline.
+Our backends do not pre-clean the run subdirectory, by design (fail loud, never silently
+clobber a prior run's trajectories).
+
+**Fix.** Point the run at a fresh outdir, or remove the stale run subdirectory first
+(`rm -rf <outdir>/rest2`). Surfaced 2026-10-07 resubmitting the REST2 demo for a longer run.

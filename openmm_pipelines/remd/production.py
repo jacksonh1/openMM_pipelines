@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from openmm import unit
@@ -29,6 +30,10 @@ from ..lib.system_edits import strip_barostats
 from ..reports import REMDRunReport, write_json
 from .ladder import geometric_ladder
 
+if TYPE_CHECKING:
+    from ..preparation.handoff import EquilibratedSystem
+    from .config import REMDConfig
+
 _NC = "remd.nc"
 
 
@@ -38,7 +43,7 @@ def _ladder(cfg) -> list[float]:
     return geometric_ladder(cfg.temperature_k, cfg.max_temperature_k, cfg.n_replicas)
 
 
-def run(eq, cfg) -> Path:
+def run(eq: EquilibratedSystem, cfg: REMDConfig) -> Path:
     outdir = cfg.outdir / "remd"
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -75,17 +80,21 @@ def run(eq, cfg) -> Path:
         str(outdir / _NC),
         checkpoint_interval=cfg.checkpoint_interval_iterations,
     )
-    sampler.create(thermo_states, [sampler_state] * len(temperatures), storage=reporter)
+    try:
+        sampler.create(thermo_states, [sampler_state] * len(temperatures), storage=reporter)
 
-    t0 = time.perf_counter()
-    if cfg.equilibration_iterations > 0:
-        sampler.equilibrate(cfg.equilibration_iterations)
-    sampler.run()
-    wall_seconds = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        if cfg.equilibration_iterations > 0:
+            sampler.equilibrate(cfg.equilibration_iterations)
+        sampler.run()
+        wall_seconds = time.perf_counter() - t0
 
-    report = _run_report(reporter, cfg, temperatures, wall_seconds)
-    write_json(report, outdir / "run_report.json")
-    reporter.close()
+        report = _run_report(reporter, cfg, temperatures, wall_seconds)
+        write_json(report, outdir / "run_report.json")
+    finally:
+        # Always release the .nc handle, even on a crashed run — openmmtools otherwise
+        # "cowardly refuses to overwrite" the orphaned file on rerun (GOTCHAS.md).
+        reporter.close()
     return outdir
 
 

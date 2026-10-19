@@ -16,7 +16,9 @@ from pathlib import Path
 from openmm import LangevinMiddleIntegrator, Platform, unit
 from openmm.app import Simulation
 
+from ..config import PrepConfig
 from ..lib.density_convergence import assess_plateau
+from ..lib.platforms import gpu_props
 from ..lib.restraints import add_restraint, reanchor
 from ..lib.selections import protein_heavy_atoms
 from ..reports import PrepReport, RunInfo, write_json
@@ -25,7 +27,6 @@ from .build import _count_disulfides, build_system
 from .handoff import EquilibratedSystem
 from .minimize import minimize
 
-_GPU_PLATFORMS = ("CUDA", "OpenCL", "HIP")
 _ION_RESIDUES = frozenset(
     {"NA", "CL", "K", "MG", "CA", "ZN", "BR", "CS", "RB", "LI", "F", "IOD", "SOD", "CLA"}
 )
@@ -40,8 +41,7 @@ def _make_simulation(topology, system, cfg):
     if cfg.seed is not None:
         integ.setRandomNumberSeed(cfg.seed)
     platform = Platform.getPlatformByName(cfg.platform)
-    props = {"Precision": "mixed"} if cfg.platform in _GPU_PLATFORMS else {}
-    return Simulation(topology, system, integ, platform, props)
+    return Simulation(topology, system, integ, platform, gpu_props(cfg.platform))
 
 
 def _potential_kj(sim) -> float:
@@ -64,7 +64,7 @@ def _instantaneous_temperature_k(sim) -> float:
     return (2 * ke / (dof * unit.MOLAR_GAS_CONSTANT_R)).value_in_unit(unit.kelvin)
 
 
-def prepare(cfg) -> EquilibratedSystem:
+def prepare(cfg: PrepConfig) -> EquilibratedSystem:
     t0 = time.perf_counter()
     cfg.outdir.mkdir(parents=True, exist_ok=True)
 

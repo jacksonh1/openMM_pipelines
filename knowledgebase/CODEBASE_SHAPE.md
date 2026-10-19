@@ -1,9 +1,9 @@
 # CODEBASE_SHAPE — openmm_pipelines
 
-> Status (2026-10-01): **design sketch only.** No `.py` files exist yet. This
-> document describes the *intended* architecture from `SKELETON_v2.md`; update it
-> to reflect reality as modules land. The authoritative current design is always
-> `SKELETON_v2.md` at the repo root until implementation catches up.
+> Status (2026-10-10): **implemented.** All modules below are built and tested
+> (`python -m pytest -q` in `openmm_env`) — plain MD, T-REMD and REST2 behind one
+> prepare/produce seam. The `[BUILT]` tags are retained as a landed-module map.
+> This document is now the architecture map of record; update it as modules change.
 
 ## What this package is
 
@@ -65,19 +65,20 @@ openmm_pipelines/
     density_convergence.py #   assess_plateau, density_converged (pure math)    [BUILT]
     selections.py          #   protein_heavy_atoms (restraints), protein_atoms (REST2 solute) [BUILT]
     system_edits.py        #   clone_system, strip_barostats (NVT; shared by remd+rest2)      [BUILT]
+    platforms.py           #   is_gpu, gpu_props (mixed-precision props), precision_label      [BUILT]
 
   preparation/             # the prepare side of the seam (shared by all engines)
     __init__.py
-    prepare.py             #   prepare(cfg) -> EquilibratedSystem  (composer)   [soon]
+    prepare.py             #   prepare(cfg) -> EquilibratedSystem  (composer)   [BUILT]
     build.py               #   build_system -> BuiltSystem; disulfide+water guards [BUILT]
     minimize.py            #   minimize (static energy min + finite-E guard)    [BUILT]
     equilibration_steps.py #   equilibrate_nvt, add_barostat, equilibrate_density [BUILT]
-    handoff.py             #   BuiltSystem, EquilibratedSystem (to_disk/from_disk(outdir)) [stub]
+    handoff.py             #   BuiltSystem, EquilibratedSystem (to_disk/from_disk(outdir)) [BUILT]
 
-  md/                      # plain production MD  [NOW]
+  md/                      # plain production MD  [BUILT]
     __init__.py            #   -> run, MDConfig
     config.py              #   MDConfig(PrepConfig)                             [BUILT]
-    production.py          #   run(eq, cfg) -> Path                             [soon]
+    production.py          #   run(eq, cfg) -> Path                             [BUILT]
 
   remd/                    # T-REMD  [BUILT; needs [remd] extra]
     config.py              #   REMDConfig(PrepConfig) (NVT, geometric ladder)      [BUILT]

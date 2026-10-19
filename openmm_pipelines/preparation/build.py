@@ -9,11 +9,16 @@ model's expected per-residue geometry.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from openmm import app, unit
 from pdbfixer import PDBFixer
 
 from ..forcefield import resolve
 from .handoff import BuiltSystem
+
+if TYPE_CHECKING:
+    from ..config import PrepConfig
 
 
 class PrepareError(RuntimeError):
@@ -27,7 +32,7 @@ def _count_disulfides(topology) -> int:
     )
 
 
-def build_system(cfg) -> BuiltSystem:  # cfg: PrepConfig
+def build_system(cfg: PrepConfig) -> BuiltSystem:
     fixer = PDBFixer(filename=str(cfg.pdb_in))
     ss_before = _count_disulfides(fixer.topology)  # capture the input pose's disulfides
     fixer.findMissingResidues()

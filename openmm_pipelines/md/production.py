@@ -11,18 +11,22 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from openmm import LangevinMiddleIntegrator, Platform, unit
 from openmm.app import CheckpointReporter, Simulation, StateDataReporter, XTCReporter
 
+from ..lib.platforms import gpu_props
 from ..reports import RunReport, write_json
 
-_GPU_PLATFORMS = ("CUDA", "OpenCL", "HIP")
+if TYPE_CHECKING:
+    from ..preparation.handoff import EquilibratedSystem
+    from .config import MDConfig
 
 
-def run(eq, cfg) -> Path:
+def run(eq: EquilibratedSystem, cfg: MDConfig) -> Path:
     prod = cfg.outdir / "production"
     prod.mkdir(parents=True, exist_ok=True)
 
@@ -34,9 +38,8 @@ def run(eq, cfg) -> Path:
     if cfg.seed is not None:
         integ.setRandomNumberSeed(cfg.seed)
     platform = Platform.getPlatformByName(cfg.platform)
-    props = {"Precision": "mixed"} if cfg.platform in _GPU_PLATFORMS else {}
 
-    sim = Simulation(eq.topology, eq.system, integ, platform, props)
+    sim = Simulation(eq.topology, eq.system, integ, platform, gpu_props(cfg.platform))
     sim.context.setPeriodicBoxVectors(*eq.box_vectors)
     sim.context.setPositions(eq.positions)
     sim.context.setVelocitiesToTemperature(
@@ -69,9 +72,13 @@ def run(eq, cfg) -> Path:
 
 
 def _col(df: pd.DataFrame, needle: str) -> pd.Series:
-    """Pick the StateDataReporter column whose verbose header contains `needle`."""
+    """Pick the one StateDataReporter column whose verbose header contains `needle`.
+
+    Fails loud on zero or >1 matches — an ambiguous match (e.g. two "Energy" columns)
+    would otherwise silently take the first and report the wrong statistic.
+    """
     matches = [c for c in df.columns if needle.lower() in c.lower()]
-    assert matches, f"no column matching {needle!r} in {list(df.columns)}"
+    assert len(matches) == 1, f"expected exactly one column matching {needle!r}, got {matches}"
     return df[matches[0]]
 
 

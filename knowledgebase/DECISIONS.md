@@ -9,6 +9,56 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-10-15 — REST2 scales torsions + nonbonded, NOT bonds/angles (the standard); straddle guard
+
+**Decision.** The default REST2 solute scaling (`rest2/scaling.py`) scales: charges √λ, LJ ε·λ,
+NonbondedForce exceptions (1-4), proper + improper torsions ·λ, and CMAP ·λ. It does **not** scale
+solute **bonds or angles** (factor 1). Bonds/angles are recognized and passed through unscaled, not
+dropped — so the unhandled-force refusal still protects against genuinely unknown forces.
+
+**Why.** The prior `scale_solute` (Claude-generated, never validated against the field) scaled bonds
+and angles. That is non-standard. Scaling bonds/angles appears only in NAMD's opt-in `soluteScalingAll`
+and a teaching tutorial; it is absent from the original REST2 paper (Wang-Friesner-Berne 2011, which
+reports scaling them does not aid sampling), plumed `partial_tempering`, NAMD's default, and femto
+(Psivant's production OpenMM REST2, which `raise`s on bonds/angles). Verified three ways, including an
+empirical diff of the sibling `gromacs_REMD` pipeline's generated per-replica topologies: only LJ,
+charges, and dihedrals change across λ; bonds and angles are identical. Physical rationale: bonds and
+angles are stiff coordinates near equilibrium; softening them does not lower the conformational
+barriers REST2 exists to cross. *Rejected:* the full-E_pp "literal solute temperature" scheme (scale
+everything) — legitimate but non-standard, no sampling benefit, and it would have forked AMBER and
+CHARMM into different methods.
+
+**Straddle guard.** `_scale_periodic_torsion` **refuses** (NotImplementedError) a torsion with some —
+but not all — atoms in the solute. Such a cross-boundary bonded term should be √λ-scaled (the E_pw
+cross factor), which is not implemented. This pipeline only tempers whole molecules (whole protein or a
+whole chain), where no covalent torsion crosses the boundary, so the guard is inert for supported
+selections. It fires only if the selection cut a covalent chain mid-molecule — a future sub-chain
+selection, or an **inter-chain disulfide** linking the hot chain to a cold one (a real case for the
+disulfide-constrained designs). *Rejected:* silently leaving straddling torsions unscaled (the prior
+all-or-nothing behavior) — it would produce a quietly-wrong Hamiltonian the day sub-molecule selection
+is added. Torsions are the only term needing the guard: bonds/angles are no longer scaled, NB
+exceptions already apply per-atom √λ to mixed pairs, and CMAP has its own all-inside gate.
+
+**Mechanism note.** femto implements this scheme with global-parameter offsets (one System, λ per
+context). We keep **path A** (N pre-scaled Systems). The *scheme* (which terms, which powers) is
+adopted from femto/the standard; the *mechanism* stays path A — independent choices (see 2026-10-06).
+
+## 2026-10-10 — Fail-loud must not fire on valid input (λ round-trip assert removed)
+
+**Decision.** Removed the `_ladder` assertion in `rest2/production.py` that re-derived an
+explicit `lambdas` ladder via `lambdas_from_effective_temperatures` and compared with exact
+float `==`. Validation of the λ ladder lives **once**, at the config boundary
+(`REST2Config._check_rest2`: λ[0]=1, strictly descending, every λ in (0,1]); production trusts it.
+
+**Why.** "Fail loud" means crash on *violated assumptions*, not on *floating-point identity of
+a redundant round-trip*. `T_0 / (T_0 / λ)` reintroduces rounding (0.43 → 0.43000000000000005),
+so the assert raised `AssertionError` on legitimate ladders — a fail-loud check that fails on
+valid input is worse than none: it makes the documented `lambdas=` path unusable and surfaces
+only at job-submit. General rule going forward: validate a value **once at the boundary** where
+it enters, parse-don't-validate; don't re-assert a derived quantity's exact equality downstream.
+If a downstream sanity check is genuinely wanted, use a tolerance (`np.allclose`), never `==` on
+floats.
+
 ## 2026-10-06 — REST2: pre-scaled Systems (path A), fail-loud FF support, released-restraint gate
 
 **Decision.** REST2 scales the solute force-field terms into **N independent pre-scaled

@@ -21,11 +21,18 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 
+def _json_default(obj):
+    """Only `Path` is expected to be non-JSON-native; anything else is a bug — fail loud."""
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"not JSON-serializable: {type(obj).__name__} ({obj!r})")
+
+
 def write_json(obj, path: Path) -> None:
     """Serialize a dataclass (or dict) to pretty JSON."""
     path = Path(path)
     data = dataclasses.asdict(obj) if dataclasses.is_dataclass(obj) else obj
-    path.write_text(json.dumps(data, indent=2, default=str))
+    path.write_text(json.dumps(data, indent=2, default=_json_default))
 
 
 def _pkg_version(name: str) -> str | None:
@@ -65,8 +72,10 @@ class RunInfo:
 
         from .forcefield import resolve
 
+        from .lib.platforms import precision_label
+
         xmls, packing = resolve(cfg.protein_ff, cfg.water)
-        precision = "mixed" if cfg.platform in ("CUDA", "OpenCL", "HIP") else "double"
+        precision = precision_label(cfg.platform)
         return cls(
             timestamp_utc=_dt.datetime.now(_dt.timezone.utc).isoformat(),
             openmm_pipelines_version=_pkg_version("openmm_pipelines"),

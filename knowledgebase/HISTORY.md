@@ -5,6 +5,112 @@ factual.
 
 ---
 
+## 2026-10-15 — REST2 solute scaling corrected to the standard (bonds/angles unscaled) + straddle guard
+
+Investigated what REST2 should scale, because the existing `scale_solute` (Claude-generated,
+never validated) scaled solute **bonds and angles** — and found that is non-standard.
+
+- **Evidence (three independent lines, all agree): do NOT scale bonds/angles.**
+  1. Literature + implementations: original REST2 (Wang-Friesner-Berne 2011), plumed
+     `partial_tempering`, NAMD default (bonds/angles only under `soluteScalingAll`), and
+     femto (Psivant, production OpenMM REST2 — `raise NotImplementedError` on bonds/angles).
+  2. The sibling `RELE_simulations/gromacs_REMD` repo's `docs/rest2-validation-brief.md`
+     states bonds/angles = factor 1, citing Wang 2011 ("scaling them does not help sampling").
+  3. **Empirical:** diffed that pipeline's generated per-replica topologies (λ=1 vs most-scaled)
+     — only `[atomtypes]` (LJ), `[atoms]` (charges, exactly the 433 protein atoms), and
+     `[dihedrals]` (torsions) change; `[bonds]` and `[angles]` are byte-identical.
+- **Change:** `rest2/scaling.py` — bonds/angles no longer scaled; now recognized-but-pass-through
+  (`HarmonicBond/AngleForce` → `continue`) so the unhandled-force refusal still fires for genuinely
+  unknown forces. Removed `_scale_harmonic_bond`/`_scale_harmonic_angle`. Still scaled (all standard):
+  charges √λ, LJ ε·λ, NB exceptions (1-4), proper+improper torsions ·λ, CMAP ·λ.
+- **Straddle guard:** `_scale_periodic_torsion` now **refuses** (NotImplementedError) a torsion with
+  some-but-not-all atoms in the solute. Such a cross-boundary term would need √λ (E_pw) scaling,
+  which is unimplemented; whole-molecule selection (whole protein / whole chain — all this pipeline
+  does) guarantees none. Catches a future sub-chain selection AND an inter-chain disulfide linking a
+  hot chain to a cold one (relevant to the disulfide-constrained designs). Torsions are the only spot
+  that needed it: bonds/angles no longer scaled, NB exceptions already do per-atom √λ, CMAP has its
+  own all-inside gate.
+- Tests updated (`test_bonds_and_angles_not_scaled`, `test_straddling_torsion_refused`); **85/85
+  non-slow pass**. Slow GPU tests not run (no GPU on dev node) — they assert only on NonbondedForce,
+  so unaffected.
+- Wrote `knowledgebase/REST2_scaling_open_question.md` (neutral, bias-stripped) to feed to Claude
+  Science for a literature cross-check.
+
+**Still deferred / follow-ups:** (a) CHARMM36m REST2 — the `CustomNonbonded`/`CustomBond`/
+`CustomTorsion` (NBFIX LJ / 1-4 LJ / impropers) handlers are still refused loudly; design is worked
+out (per-particle √λ multiplier on the NBFIX force) and grounded in a real force-dump, not yet
+implemented. (b) The AMBER REST2 demo ladder (11 rungs, ~0.42 acceptance) was tuned under the OLD
+scheme — fewer terms scaled now → acceptance will rise → needs a re-tune on a GPU node. (c) a99SB-disp
+needs a trustworthy OpenMM conversion first (openmmforcefields does NOT ship it; authors' repo has only
+Amber/Gromacs/Desmond). (d) Adopt the gromacs_REMD validation brief's gates 0-7 as the REST2 validation
+harness.
+
+## 2026-10-10 — Architecture review + fixes (HIGH/MEDIUM/LOW)
+
+Ran a principal-architect pass over the whole package. Verdict: sound — prepare/produce
+seam clean, pure/OpenMM separation honored, fail-loud strong (zero bare except), demux
+walker/slot indexing correct. Fixed the findings:
+
+- **HIGH — spurious λ round-trip assert (`rest2/production.py`).** `_ladder` re-checked an
+  explicit `lambdas` ladder with exact-float `==` against `lambdas_from_effective_temperatures`;
+  the round-trip injects float error (e.g. 0.43 → 0.43000000000000005) so it `AssertionError`ed
+  on *valid* input, discoverable only at job submit. Deleted — `REST2Config._check_rest2`
+  already enforces λ[0]=1, strictly descending, (0,1]. (See DECISIONS, fail-loud overreach.)
+- **MEDIUM — reporter leak.** `remd`+`rest2` `run()` now wrap create/equilibrate/run in
+  `try/finally: reporter.close()`, mirroring `analysis/multistate`. A crashed run no longer
+  orphans the `.nc` (which then trips openmmtools' "cowardly refusing to overwrite" on rerun).
+- **MEDIUM — DSSP `NA` dropped.** `ss_fractions` silently omitted mdtraj's `NA` code (chain
+  termini, ACE/NME caps — common here), so H+E+C ≠ 1 and coil was under-reported. Now reports
+  `na` as its own fraction + asserts codes ⊆ {H,E,C,NA}; `plots.py` plots it.
+- **LOW — platform/precision dedup.** New `lib/platforms.py` (`is_gpu`/`gpu_props`/
+  `precision_label`); replaced 4 inline copies (prepare, md/production, context_cache, reports).
+  `context_cache` keeps `None`-for-CPU (set_platform's validator short-circuits on None, else
+  builds a throwaway probe Context on `{}`).
+- **LOW — fail-loud tightening.** `reports.write_json` `default=str` → `_json_default` (Path
+  only; `TypeError` otherwise). `md._col` now asserts exactly one column match (was silent
+  `matches[0]`). Real type hints across the seam (`prepare`/`build_system`/`*.run`) via
+  `TYPE_CHECKING`.
+- Refreshed `CODEBASE_SHAPE.md`: dropped the stale "design sketch only, no .py yet" header;
+  `[soon]`/`[stub]` → `[BUILT]`; added `platforms.py`.
+
+Verified: 84/84 non-slow tests pass; all edited modules import. The 11 slow tests are live
+GPU runs (need a GPU node) — not run this session (no GPU on the dev node).
+
+## 2026-10-07 — REST2 demo sbatch + ladder sizing + solute-mask verification
+
+Added `examples/REST2_demo/demo_rest2.sbatch` (mirrors the REMD demo submitter:
+`mit_normal_gpu`, one L40S, 30 min, `$SLURM_SUBMIT_DIR`) and ran it on a GPU node.
+
+- **Ladder sizing.** The 6-rung demo (300→450 K effective) gave ~0.11 mean neighbour
+  acceptance — confirmed real (not statistics) by a 500 ps / 501-iteration rerun that
+  reproduced it (0.107, flat). Too sluggish (`subdominant_eigenvalue` ~0.98). A √p-scaling
+  estimate (halving spacing takes p→√p) predicted ~0.33 at 11 rungs; the 11-rung run gave
+  **0.42 mean, flat across the ladder** (`subdominant_eigenvalue` 0.956). Bumped the demo to
+  11 rungs. 9–10 would also land in the 0.2–0.4 band; 6 is too few.
+- **Why REST2's rung count looked close to REMD's** (user flagged it as suspicious): pure
+  range artifact. REMD demo = 14 rungs over a *narrow* 300→360 K (4.6 K/gap, whole box);
+  REST2 = 6 rungs over a *wide* 300→450 K effective (30 K/gap). REST2 tolerates 6.5× coarser
+  spacing precisely because it tempers only the solute — the expected solute-tempering payoff,
+  not a broken mask.
+- **Solute mask verified on the REAL prepared system** (`demo_rest2_out/prepared/system.xml`
+  + `topology.cif`, no re-prepare). Of 5414 atoms, exactly **433 (8%) are solute and get
+  scaled** (q→√λ·q, ε→λ·ε, σ fixed), and all **4981 solvent atoms are byte-identical** —
+  particles-changed == solute-count, so the mask neither leaks into solvent nor misses solute.
+  All **217 solute hydrogens** are included. The low 10.1 atoms/residue was just because
+  `helix_fusion.pdb` is a 43-residue **poly-alanine** helix, not a selection bug. (Scratch
+  check script, not committed; the synthetic-system equivalent is already in
+  `tests/test_rest2_scaling.py` + `tests/test_rest2.py::test_solute_is_actually_scaled_on_real_system`.)
+- **New gotcha:** openmmtools refuses to overwrite an existing `.nc` ("cowardly refusing" —
+  the git/Perl idiom, from `multistatesampler.py:589`); a rerun needs a clean outdir. Logged
+  in GOTCHAS + CLAUDE.md index.
+
+Strengthened `test_solute_is_actually_scaled_on_real_system`: besides the per-atom spot-check
+it now asserts the fixture is 433 poly-Ala solute atoms and that **exactly** that many
+particles' nonbonded params change (none outside the solute) — catches a mask that is too
+broad or too narrow, which single-atom checks cannot. Demo left at 11 rungs (0.42 acceptance).
+
+---
+
 ## 2026-10-07 — REST2 review pass: decompose/parameterize cleanup + re-entrancy fix
 
 Reviewed the REST2 work against the project principles (simple single-purpose primitives;

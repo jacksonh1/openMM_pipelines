@@ -96,37 +96,58 @@ def test_original_system_untouched():
     assert _charge(nb, 0) == pytest.approx(0.1)  # caller's system not mutated
 
 
-def test_harmonic_bond_scaled_only_within_solute():
+def test_bonds_and_angles_not_scaled():
+    """Standard REST2 (Wang-Friesner-Berne 2011) does NOT scale bonds or angles, even
+    fully inside the solute. They must be recognized (no refusal) and passed through with
+    force constants untouched — matches plumed partial_tempering / NAMD default / femto.
+    """
     system = openmm.System()
     for _ in range(4):
         system.addParticle(12.0 * unit.amu)
     bond = openmm.HarmonicBondForce()
-    bond.addBond(0, 1, 0.15, 1000.0)  # solute-solute -> scaled
-    bond.addBond(2, 3, 0.15, 2000.0)  # solvent-solvent -> untouched
+    bond.addBond(0, 1, 0.15, 1000.0)  # solute-solute: STILL not scaled
+    bond.addBond(2, 3, 0.15, 2000.0)  # solvent-solvent
+    angle = openmm.HarmonicAngleForce()
+    angle.addAngle(0, 1, 2, 1.9, 500.0)  # solute: STILL not scaled
     system.addForce(bond)
-    scaled = scale_solute(system, SOLUTE, LAM)
-    sb = scaled.getForce(0)
-    assert sb.getBondParameters(0)[3].value_in_unit(
-        unit.kilojoule_per_mole / unit.nanometer**2) == pytest.approx(1000.0 * LAM)
-    assert sb.getBondParameters(1)[3].value_in_unit(
-        unit.kilojoule_per_mole / unit.nanometer**2) == pytest.approx(2000.0)
+    system.addForce(angle)
+
+    scaled = scale_solute(system, SOLUTE, LAM)  # must not raise
+    sb, sa = scaled.getForce(0), scaled.getForce(1)
+    kbu = unit.kilojoule_per_mole / unit.nanometer**2
+    kau = unit.kilojoule_per_mole / unit.radian**2
+    assert sb.getBondParameters(0)[3].value_in_unit(kbu) == pytest.approx(1000.0)  # unscaled
+    assert sb.getBondParameters(1)[3].value_in_unit(kbu) == pytest.approx(2000.0)
+    assert sa.getAngleParameters(0)[4].value_in_unit(kau) == pytest.approx(500.0)  # unscaled
 
 
-def test_periodic_torsion_scaled_only_within_solute():
+def test_periodic_torsion_scaled_when_fully_inside_solute():
     system = openmm.System()
     for _ in range(5):
         system.addParticle(12.0 * unit.amu)
     tor = openmm.PeriodicTorsionForce()
-    tor.addTorsion(0, 1, 2, 3, 2, 0.0, 5.0)   # all solute? 2,3 not in SOLUTE -> no
+    tor.addTorsion(0, 1, 2, 3, 2, 0.0, 5.0)
     system.addForce(tor)
-    # with SOLUTE={0,1,2,3}, the torsion is fully inside solute and scales
+    # torsion fully inside solute -> scaled by λ
     s_all = scale_solute(system, [0, 1, 2, 3], LAM)
     assert s_all.getForce(0).getTorsionParameters(0)[6].value_in_unit(
         unit.kilojoule_per_mole) == pytest.approx(5.0 * LAM)
-    # with SOLUTE={0,1} the torsion crosses the boundary and is left alone
-    s_part = scale_solute(system, [0, 1], LAM)
-    assert s_part.getForce(0).getTorsionParameters(0)[6].value_in_unit(
-        unit.kilojoule_per_mole) == pytest.approx(5.0)
+
+
+def test_straddling_torsion_refused():
+    """A torsion split across the solute boundary (a sub-chain cut, or an inter-chain
+    disulfide) must be REFUSED, not silently left unscaled — standard REST2 would √λ-scale
+    such a cross-boundary bonded term, which is not implemented. Guards whole-molecule-only
+    solute selection (the only mode this pipeline uses).
+    """
+    system = openmm.System()
+    for _ in range(5):
+        system.addParticle(12.0 * unit.amu)
+    tor = openmm.PeriodicTorsionForce()
+    tor.addTorsion(0, 1, 2, 3, 2, 0.0, 5.0)  # atoms 2,3 cold when solute={0,1}
+    system.addForce(tor)
+    with pytest.raises(NotImplementedError):
+        scale_solute(system, [0, 1], LAM)
 
 
 def _cmap_system(n_particles=8):

@@ -2,7 +2,8 @@
 
 Two things proved here:
 1. **The solute is actually scaled** on the REAL prepared System — protein atoms get
-   √λ·q / λ·ε and their intramolecular bonded energy scales by λ, while water is untouched.
+   √λ·q / λ·ε and their torsions scale by λ (bonds/angles unscaled, per standard REST2),
+   while water is untouched.
    This is the correctness crux of REST2 (scaling the wrong region silently gives a wrong
    result), so it is asserted directly on the force-field parameters, not just inferred.
 2. The prepare/produce seam reused, Hamiltonian replica exchange run at one physical
@@ -90,6 +91,21 @@ def test_solute_is_actually_scaled_on_real_system(prepared):
         bval = base_nb.getParticleParameters(w)[idx]
         sval = scaled_nb.getParticleParameters(w)[idx]
         assert str(sval) == str(bval), f"solvent {getter} changed: {bval} -> {sval}"
+
+    # The mask covers the solute EXACTLY — not too broad (leaking into solvent) nor too
+    # narrow (missing solute atoms). Spot-checking one atom of each kind above cannot catch
+    # either, so count the particles whose nonbonded params actually changed and require it
+    # to equal the solute size. helix_fusion.pdb is a 43-residue poly-alanine (all H included).
+    assert len(solute) == 433, f"fixture changed: expected 433 poly-Ala solute atoms, got {len(solute)}"
+    changed = sum(
+        1
+        for i in range(base_nb.getNumParticles())
+        if any(
+            str(scaled_nb.getParticleParameters(i)[j]) != str(base_nb.getParticleParameters(i)[j])
+            for j in range(3)
+        )
+    )
+    assert changed == len(solute), f"{changed} particles scaled but solute has {len(solute)}"
 
 
 def test_run_writes_contract(rest2_run):

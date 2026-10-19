@@ -17,7 +17,13 @@ The scaling (scale the force-field terms; all replicas share T_0):
   and ε per exception and does NOT re-derive them from per-particle params, so they must be
   rescaled explicitly with the same combining factors (solute-solute ∝ λ; a solute-solvent
   exception, which bonded topology should never produce, ∝ √λ).
-- **Solute-only bonded terms** (bonds / angles / torsions fully inside the solute): k · λ.
+- **Solute torsions** (proper + improper, fully inside the solute): k · λ.
+- **Bonds and angles:** left **unscaled** (factor 1). Standard REST2 does not scale these
+  stiff internal coordinates — scaling them does not aid conformational sampling
+  (Wang-Friesner-Berne 2011), and the de facto implementations agree: plumed
+  `partial_tempering`, NAMD's default (bonds/angles only under `soluteScalingAll`), and
+  femto all leave bonds/angles at full strength. They are recognized here (passed through)
+  so they do not trip the unhandled-force refusal.
 - **CMAP (CHARMM36m backbone correction):** a solute intramolecular term — the map
   energies are scaled by λ. Forgetting it silently gives a wrong REST2, so this is gated:
   if any CMAP torsion reaches outside the solute, we refuse.
@@ -25,8 +31,9 @@ The scaling (scale the force-field terms; all replicas share T_0):
 Solvent-solvent is left untouched. At λ = 1 every factor is 1, so the scaled System is
 energetically identical to the input (the identity the tests pin).
 
-**Force-field support:** the AMBER force set (HarmonicBond/Angle, PeriodicTorsion,
-NonbondedForce) plus CMAP is handled. CHARMM36(m) additionally builds the LJ as
+**Force-field support:** the AMBER force set is handled — NonbondedForce and
+PeriodicTorsion are scaled, HarmonicBond/Angle are recognized and passed through unscaled
+(see above), plus CMAP. CHARMM36(m) additionally builds the LJ as
 `CustomNonbondedForce` + `CustomBondForce` (NBFIX) and impropers as `CustomTorsionForce`;
 scaling those correctly is not yet implemented, so a System carrying any unrecognized
 force with solute atoms is **refused** rather than silently mis-scaled. See TODO.
@@ -78,10 +85,12 @@ def scale_solute(system: System, solute_indices, lam: float) -> System:
     for force in (scaled.getForce(i) for i in range(scaled.getNumForces())):
         if isinstance(force, NonbondedForce):
             _scale_nonbonded(force, solute, lam, sqrt_lam)
-        elif isinstance(force, HarmonicBondForce):
-            _scale_harmonic_bond(force, solute, lam)
-        elif isinstance(force, HarmonicAngleForce):
-            _scale_harmonic_angle(force, solute, lam)
+        elif isinstance(force, (HarmonicBondForce, HarmonicAngleForce)):
+            # NOT scaled in standard REST2 (Wang-Friesner-Berne 2011; plumed
+            # partial_tempering / NAMD default / femto all agree). Recognized explicitly so
+            # the solute's stiff internal coordinates pass through unchanged rather than
+            # tripping the unhandled-force refusal below.
+            continue
         elif isinstance(force, PeriodicTorsionForce):
             _scale_periodic_torsion(force, solute, lam)
         elif isinstance(force, CMAPTorsionForce):
@@ -143,25 +152,34 @@ def _scale_nonbonded(force: NonbondedForce, solute, lam: float, sqrt_lam: float)
         force.setExceptionParameters(k, p1, p2, charge_prod * cf, sigma, epsilon * ef)
 
 
-def _scale_harmonic_bond(force: HarmonicBondForce, solute, lam: float) -> None:
-    for i in range(force.getNumBonds()):
-        p1, p2, length, k = force.getBondParameters(i)
-        if p1 in solute and p2 in solute:
-            force.setBondParameters(i, p1, p2, length, k * lam)
-
-
-def _scale_harmonic_angle(force: HarmonicAngleForce, solute, lam: float) -> None:
-    for i in range(force.getNumAngles()):
-        p1, p2, p3, angle, k = force.getAngleParameters(i)
-        if p1 in solute and p2 in solute and p3 in solute:
-            force.setAngleParameters(i, p1, p2, p3, angle, k * lam)
-
-
 def _scale_periodic_torsion(force: PeriodicTorsionForce, solute, lam: float) -> None:
+    """Scale solute torsions (proper + improper) by λ; refuse a torsion that STRADDLES the
+    solute boundary.
+
+    A torsion with some — but not all — atoms in the solute is a cross-boundary bonded term.
+    Standard REST2 would scale it by √λ (the E_pw cross factor), but that √λ bonded scaling
+    is not implemented here. This pipeline only ever tempers whole molecules (whole protein
+    or a whole chain), for which no covalent torsion crosses the boundary. A straddling
+    torsion therefore means the selection cut a covalent chain mid-molecule — a sub-chain
+    selection, or an inter-chain disulfide linking the hot chain to a cold one (relevant for
+    the disulfide-constrained designs this project targets). Refuse, rather than silently
+    leaving the boundary torsion at full strength.
+    """
     for i in range(force.getNumTorsions()):
         p1, p2, p3, p4, periodicity, phase, k = force.getTorsionParameters(i)
-        if p1 in solute and p2 in solute and p3 in solute and p4 in solute:
-            force.setTorsionParameters(i, p1, p2, p3, p4, periodicity, phase, k * lam)
+        n_in = (p1 in solute) + (p2 in solute) + (p3 in solute) + (p4 in solute)
+        if n_in == 0:
+            continue
+        if n_in < 4:
+            raise NotImplementedError(
+                f"torsion {i} on atoms {(p1, p2, p3, p4)} straddles the solute boundary "
+                f"({n_in}/4 atoms in solute). REST2 √λ scaling of cross-boundary bonded "
+                "terms is not implemented; the solute must be whole molecules (whole protein "
+                "or a whole chain). This usually means a sub-chain solute selection or an "
+                "inter-chain disulfide linking the hot chain to a cold one. Refusing rather "
+                "than leaving a boundary torsion silently unscaled."
+            )
+        force.setTorsionParameters(i, p1, p2, p3, p4, periodicity, phase, k * lam)
 
 
 def _scale_cmap(force: CMAPTorsionForce, solute, lam: float) -> None:

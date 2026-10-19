@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from openmm import unit
@@ -32,8 +33,12 @@ from ..exchange import neighbor_acceptance
 from ..lib.selections import protein_atoms
 from ..lib.system_edits import strip_barostats
 from ..reports import REST2RunReport, write_json
-from .ladder import lambda_ladder, lambdas_from_effective_temperatures
+from .ladder import lambda_ladder
 from .scaling import scale_solute
+
+if TYPE_CHECKING:
+    from ..preparation.handoff import EquilibratedSystem
+    from .config import REST2Config
 
 _NC = "rest2.nc"
 
@@ -42,14 +47,15 @@ def _ladder(cfg) -> tuple[list[float], list[float]]:
     """`(lambdas, effective_temperatures_k)` from config (explicit λ ladder or geometric)."""
     if cfg.lambdas is not None:
         lambdas = list(cfg.lambdas)
+        # λ = T_0 / T_eff. REST2Config._check_rest2 already guarantees λ[0]=1.0, strictly
+        # descending, every λ in (0, 1] — no round-trip re-check (exact float == on the
+        # round-trip spuriously fails valid ladders, e.g. 0.43 -> 0.43000000000000005).
         effective = [cfg.temperature_k / lam for lam in lambdas]
-        # Keep the two representations consistent (λ = T_0 / T_eff).
-        assert lambdas == lambdas_from_effective_temperatures(cfg.temperature_k, effective)
         return lambdas, effective
     return lambda_ladder(cfg.temperature_k, cfg.max_effective_temperature_k, cfg.n_replicas)
 
 
-def run(eq, cfg) -> Path:
+def run(eq: EquilibratedSystem, cfg: REST2Config) -> Path:
     outdir = cfg.outdir / "rest2"
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -96,17 +102,23 @@ def run(eq, cfg) -> Path:
     reporter = MultiStateReporter(
         str(outdir / _NC), checkpoint_interval=cfg.checkpoint_interval_iterations
     )
-    sampler.create(thermo_states, [sampler_state] * len(lambdas), storage=reporter)
+    try:
+        sampler.create(thermo_states, [sampler_state] * len(lambdas), storage=reporter)
 
-    t0 = time.perf_counter()
-    if cfg.equilibration_iterations > 0:
-        sampler.equilibrate(cfg.equilibration_iterations)
-    sampler.run()
-    wall_seconds = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        if cfg.equilibration_iterations > 0:
+            sampler.equilibrate(cfg.equilibration_iterations)
+        sampler.run()
+        wall_seconds = time.perf_counter() - t0
 
-    report = _run_report(reporter, cfg, lambdas, effective_temperatures, len(solute), wall_seconds)
-    write_json(report, outdir / "run_report.json")
-    reporter.close()
+        report = _run_report(
+            reporter, cfg, lambdas, effective_temperatures, len(solute), wall_seconds
+        )
+        write_json(report, outdir / "run_report.json")
+    finally:
+        # Always release the .nc handle, even on a crashed run — openmmtools otherwise
+        # "cowardly refuses to overwrite" the orphaned file on rerun (GOTCHAS.md).
+        reporter.close()
     return outdir
 
 

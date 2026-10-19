@@ -40,10 +40,10 @@ def main() -> None:
         max_effective_temperature_k=450.0,  # top rung's EFFECTIVE temperature
         # Only the solute is tempered, so this 300->450 K effective reach needs just a few
         # rungs (contrast the 14 the T-REMD demo needed for a narrower 300-360 K range).
-        n_replicas=6,
-        total_ns=0.05,  # 50 ps collected per replica
+        n_replicas=11,  # 6 rungs gave ~0.11 acceptance (too low); halving spacing -> ~0.33
+        total_ns=0.5,  # 500 ps collected per replica — enough to trust the acceptance estimate
         exchange_attempt_ps=1.0,  # swap attempt every 1 ps
-        equilibration_ns=0.005,  # 5 ps per-replica equilibration (discarded)
+        equilibration_ns=0.02,  # 20 ps per-replica equilibration (discarded)
         checkpoint_ps=2.0,  # demux frame resolution
         # solute_chain_index=None,  # whole protein tempered; set an index to heat one chain
         platform="CUDA",

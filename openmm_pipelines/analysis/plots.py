@@ -70,7 +70,7 @@ def plot_replica_state_walk(replica_states, path, max_replicas=4):
 
 def plot_ss_fractions(x, fractions, path, xlabel="time (ps)"):
     fig, ax = plt.subplots(figsize=(6, 3.5))
-    for name in ("helix", "sheet", "coil"):
+    for name in ("helix", "sheet", "coil", "na"):
         ax.plot(x, fractions[name], lw=1.0, label=name)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("fraction of residues")
