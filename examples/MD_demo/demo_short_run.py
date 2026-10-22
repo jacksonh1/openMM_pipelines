@@ -30,7 +30,8 @@ def main() -> None:
 
     eq = prepare(cfg)
     md.run(eq, cfg)
-    analysis.analyze(cfg.outdir)
+    # Pin the analysis parameters explicitly (serialized into analysis_report.json).
+    analysis.analyze(cfg.outdir, analysis.AnalysisConfig(cluster_cutoff_ang=2.0))
 
     print(f"\n=== outputs in {cfg.outdir} ===")
     for rel in (

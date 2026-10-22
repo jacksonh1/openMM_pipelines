@@ -8,6 +8,31 @@ mistake twice.
 
 ---
 
+## storage_directory: raw files live on the storage filesystem; rerun = `clean()`, not `rm` the symlink
+
+**Trigger.** Running / re-running / analyzing a run that set `PrepConfig.storage_directory`.
+
+**What to know.** With `storage_directory` set, the huge raw files (`production/trajectory.xtc`, the
+REMD/REST2 `.nc` + `*_checkpoint.nc`) are **symlinks** in `outdir` whose bytes live under
+`storage_directory/<outdir name>-<hash>/`. So:
+- **Analysis needs the storage filesystem mounted** — it reads the raw files through the outdir
+  symlinks (`demux_state` opens `outdir/<run>/<name>.nc`, which resolves into storage). A dangling
+  symlink fails loud.
+- **Rerun recovery is NOT `rm -rf outdir/<stage>`** — that removes only the symlinks; the real
+  `.nc`/trajectory still sits in storage, so a rerun hits the no-overwrite guard (ours, then
+  openmmtools') again. Use `RunLayout(outdir, storage).clean()` — it verifies the `.source_outdir`
+  ownership marker matches this outdir, then wipes exactly that run's storage folder + the outdir
+  symlinks. Then rerun.
+
+**Why it's safe by construction.** `RunLayout.offload` writes **directly onto storage** and only
+*symlinks* outdir to it — it never writes *through* the symlink. That means no cross-filesystem
+`rename()`/EXDEV, and no dependence on whether openmmtools tests existence with `exists` vs
+`lexists`. `offload` also refuses a pre-existing output rather than overwrite it, so an expensive
+trajectory is never silently deleted. The storage folder name is a hash of the absolute outdir
+(deterministic + collision-proof); the `O_EXCL` marker catches the astronomically unlikely clash.
+
+---
+
 ## openmmtools `read_mixing_statistics()` returns PER-ITERATION matrices, not cumulative
 
 **Trigger.** Computing exchange acceptance from
@@ -268,3 +293,22 @@ clobber a prior run's trajectories).
 
 **Fix.** Point the run at a fresh outdir, or remove the stale run subdirectory first
 (`rm -rf <outdir>/rest2`). Surfaced 2026-10-07 resubmitting the REST2 demo for a longer run.
+
+## a99SB-disp ions: the shipped Amber leaprc gives LEGACY parm99 ions for K/Mg/etc., not JC/Merz
+
+**Trigger.** Building a solvated, neutralised a99SB-disp system and assuming the ion parameters are
+consistent across the distribution's Amber and GROMACS ports.
+
+**What goes wrong.** With the shipped leaprcs (`leaprc.protein.ff99SBdisp` + `leaprc.water.tip4pd_disp`),
+`tleap` assigns **Joung–Cheatham/TIP4P-Ew** values to Na⁺ and Cl⁻ (σ=0.242992625/ε=0.1962296 and
+σ=0.404468018/ε=0.6276 nm,kJ) — which match the validated GROMACS port exactly — but **legacy parm99**
+values to K⁺ (σ=0.3143/ε=0.364 vs GROMACS JC 0.4736/0.00137), Mg²⁺ (0.2111/0.0628 vs Merz 0.1412/3.743),
+and others. The GROMACS port (`a99SBdisp-25e729d.ff/ffnonbonded.itp`) uses the modern
+JC-monovalent / Li–Merz-divalent set throughout. So the two "same" distributions disagree on every ion
+except Na⁺/Cl⁻ — an upstream inconsistency, not a conversion error.
+
+**Fix.** The OpenMM port's `a99SBdisp_ions.xml` follows the **GROMACS port** (the lab's REST2-validated
+reference): Na⁺/Cl⁻ are dual-confirmed; K/Rb/Cs/Li/F/I/Mg/Zn/Ca match GROMACS and are documented as
+differing from the Amber leaprc. For neutralisation (Na⁺/Cl⁻ only) there is no ambiguity. If a design
+needs K⁺/Mg²⁺/etc., know you are getting the GROMACS/JC-Merz values, not the leaprc's legacy ones.
+Discovered 2026-10-21 while building the ion xml (`tools/convert_a99sbdisp/make_ions.py`).

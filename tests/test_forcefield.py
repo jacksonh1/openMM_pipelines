@@ -44,6 +44,14 @@ def test_charmm_with_amber_water_raises():
         resolve(ProteinFF.CHARMM36M, WaterModel.TIP4PEW)
 
 
+def test_ff19sb_requires_opc():
+    # ff19SB's water is a hard requirement (parameterized with OPC), not a soft recommendation.
+    resolve(ProteinFF.AMBER19SB, WaterModel.OPC)  # the only legal pairing — must not raise
+    for w in (WaterModel.TIP3P, WaterModel.TIP4PEW, WaterModel.OPC3, WaterModel.SPCE):
+        with pytest.raises(ForceFieldError):
+            resolve(ProteinFF.AMBER19SB, w)
+
+
 def test_every_protein_ff_has_family_and_nonbonded():
     # exhaustiveness: no member falls through the match statements
     for ff in ProteinFF:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import mdtraj as md
 
 from . import multistate
+from .config import AnalysisConfig
 
 _SUBDIR = "remd"
 _NC = "remd.nc"
@@ -26,14 +27,11 @@ def demux_state(remd_dir, state_index: int) -> md.Trajectory:
     return multistate.demux_state(remd_dir, _NC, state_index)
 
 
-def analyze_remd(outdir, reference_state: int = 0, cluster_cutoff_ang: float = 2.0):
-    """Full T-REMD analysis on the fixed-T ensemble of `reference_state` (0 = T_min).
+def analyze_remd(outdir, config: AnalysisConfig | None = None):
+    """Full T-REMD analysis on the fixed-T ensemble of `config.reference_state` (0 = T_min).
 
-    Writes `outdir/remd/analysis/`: exchange_report.json, mixing plots, the de-multiplexed
-    ensemble, the drift report (RMSD/Rg/RMSF/SS vs the input pose), and its conformational
-    clusters (Cα-RMSD within `cluster_cutoff_ang` Å).
+    Writes `outdir/analysis/`: exchange_report.json, mixing plots, the de-multiplexed ensemble,
+    the drift report (RMSD/Rg/RMSF/SS vs the input pose), conformational clusters, and interchain
+    metrics for a complex.
     """
-    return multistate.analyze_multistate(
-        outdir, _SUBDIR, _NC, prefix="remd",
-        reference_state=reference_state, cluster_cutoff_ang=cluster_cutoff_ang,
-    )
+    return multistate.analyze_multistate(outdir, _SUBDIR, _NC, prefix="remd", config=config)

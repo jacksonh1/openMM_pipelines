@@ -15,6 +15,7 @@ sample at the design temperature, and the one analysis de-multiplexes. See `repl
 from pathlib import Path
 
 from openmm_pipelines import ProteinFF, WaterModel, prepare, rest2
+from openmm_pipelines.analysis.config import AnalysisConfig
 from openmm_pipelines.analysis.rest2 import analyze_rest2
 from openmm_pipelines.rest2.config import REST2Config
 
@@ -52,7 +53,7 @@ def main() -> None:
 
     eq = prepare(cfg)
     rest2.run(eq, cfg)
-    analyze_rest2(cfg.outdir, reference_state=0)  # state 0 = λ=1 physical ensemble
+    analyze_rest2(cfg.outdir, AnalysisConfig(reference_state=0))  # state 0 = λ=1 physical ensemble
 
     print(f"\n=== outputs in {cfg.outdir} ===")
     for rel in (
@@ -60,8 +61,8 @@ def main() -> None:
         "prepared/prep_report.json",
         "rest2/ladder.json",
         "rest2/run_report.json",
-        "rest2/analysis/exchange_report.json",
-        "rest2/analysis/rest2_analysis_report.json",
+        "analysis/exchange_report.json",
+        "analysis/rest2_analysis_report.json",
     ):
         print(f"\n----- {rel} -----")
         print((cfg.outdir / rel).read_text())

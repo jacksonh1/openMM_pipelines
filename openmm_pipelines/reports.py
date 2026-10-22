@@ -57,6 +57,8 @@ class RunInfo:
     python_version: str
     mdtraj_version: str | None
     numpy_version: str | None
+    scipy_version: str | None  # clustering (hierarchical) + metrics
+    scikit_learn_version: str | None  # optional DBSCAN clustering method (None if not installed)
     pdbfixer_version: str | None
     platform: str  # requested compute platform (CUDA/CPU/...)
     precision: str
@@ -83,6 +85,8 @@ class RunInfo:
             python_version=_platform.python_version(),
             mdtraj_version=_pkg_version("mdtraj"),
             numpy_version=_pkg_version("numpy"),
+            scipy_version=_pkg_version("scipy"),
+            scikit_learn_version=_pkg_version("scikit-learn"),
             pdbfixer_version=_pkg_version("pdbfixer"),
             platform=cfg.platform,
             precision=precision,

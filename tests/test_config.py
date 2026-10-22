@@ -22,8 +22,8 @@ def pdb(tmp_path):
 
 def test_defaults_construct(pdb, tmp_path):
     cfg = PrepConfig(pdb_in=pdb, outdir=tmp_path / "out")
-    assert cfg.protein_ff is ProteinFF.AMBER14SB
-    assert cfg.water is WaterModel.TIP3P
+    assert cfg.protein_ff is ProteinFF.AMBER19SB  # modern default (QM-trained backbone-CMAP)
+    assert cfg.water is WaterModel.OPC  # ff19SB's parameterization water
     assert cfg.dt_ps == 0.004
 
 
@@ -63,7 +63,15 @@ def test_density_seg_bounds_checked(pdb, tmp_path):
 
 
 def test_recommended_water_mismatch_warns(pdb, tmp_path):
+    # ff14SB with a 4-site water is legal but not recommended -> soft warning (no hard lock).
     with pytest.warns(UserWarning, match="recommended with"):
+        PrepConfig(pdb_in=pdb, outdir=tmp_path / "out",
+                   protein_ff=ProteinFF.AMBER14SB, water=WaterModel.TIP4PEW)
+
+
+def test_required_water_enforced(pdb, tmp_path):
+    # ff19SB's OPC is mandatory, not merely recommended: a mismatch is rejected, not warned.
+    with pytest.raises(ForceFieldError):
         PrepConfig(pdb_in=pdb, outdir=tmp_path / "out",
                    protein_ff=ProteinFF.AMBER19SB, water=WaterModel.TIP3P)
 

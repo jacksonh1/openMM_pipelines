@@ -32,10 +32,37 @@ def _count_disulfides(topology) -> int:
     )
 
 
+def _assert_no_internal_gaps(fixer) -> None:
+    """Fail loud if the input has an INTERNAL missing-residue gap (chain break).
+
+    A complete designed structure should have no internal chain breaks. An internal gap
+    would make PDBFixer silently rebuild a span AND can make one logical chain read as
+    several chains in later multi-chain analysis — so we catch it here, at the boundary,
+    rather than guarding for it downstream. Terminal missing residues (at a chain's very
+    start/end) are allowed. ASSUMES `fixer.findMissingResidues()` has already run.
+    """
+    # PDBFixer keys missingResidues by (chain_index, insertion_index), where chain_index
+    # indexes list(topology.chains()) and insertion_index is the position within that
+    # chain's residues before which residues would be inserted (0 = N-term, len = C-term).
+    residues_per_chain = [sum(1 for _ in chain.residues()) for chain in fixer.topology.chains()]
+    internal = sorted(
+        (chain_index, ins_idx)
+        for (chain_index, ins_idx) in fixer.missingResidues
+        if 0 < ins_idx < residues_per_chain[chain_index]
+    )
+    if internal:
+        raise PrepareError(
+            f"input has internal missing-residue gap(s) at (chain, position) {internal}; "
+            "a complete design should have no internal chain breaks. Model the missing "
+            "residues in the input structure before preparing."
+        )
+
+
 def build_system(cfg: PrepConfig) -> BuiltSystem:
     fixer = PDBFixer(filename=str(cfg.pdb_in))
     ss_before = _count_disulfides(fixer.topology)  # capture the input pose's disulfides
     fixer.findMissingResidues()
+    _assert_no_internal_gaps(fixer)  # GUARD: no internal chain breaks in a designed input
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
     fixer.addMissingHydrogens(cfg.ph)

@@ -24,9 +24,11 @@ The scaling (scale the force-field terms; all replicas share T_0):
   `partial_tempering`, NAMD's default (bonds/angles only under `soluteScalingAll`), and
   femto all leave bonds/angles at full strength. They are recognized here (passed through)
   so they do not trip the unhandled-force refusal.
-- **CMAP (CHARMM36m backbone correction):** a solute intramolecular term — the map
-  energies are scaled by λ. Forgetting it silently gives a wrong REST2, so this is gated:
-  if any CMAP torsion reaches outside the solute, we refuse.
+- **CMAP (backbone correction — CHARMM36m's φ/ψ CMAP *and* ff19SB's QM-trained CMAP):** a
+  solute intramolecular term, so the map energies are scaled by λ exactly like the proper
+  torsions. Keyed on the CMAPTorsionForce type, not the FF name, so both FFs are handled the
+  same way. Forgetting it silently gives a wrong REST2, so this is gated: if any CMAP torsion
+  reaches outside the solute, we refuse.
 
 Solvent-solvent is left untouched. At λ = 1 every factor is 1, so the scaled System is
 energetically identical to the input (the identity the tests pin).
@@ -184,6 +186,9 @@ def _scale_periodic_torsion(force: PeriodicTorsionForce, solute, lam: float) -> 
 
 def _scale_cmap(force: CMAPTorsionForce, solute, lam: float) -> None:
     """Scale every CMAP energy map by λ (CMAP is a solute backbone term).
+
+    Applies to any CMAPTorsionForce — CHARMM36m's backbone CMAP and ff19SB's QM-trained
+    CMAP alike (ff19SB is the default FF; its CMAP is tempered exactly like the torsions).
 
     Maps are shared across torsions, so gate first: every CMAP torsion must lie entirely
     within the solute, else scaling a shared map would wrongly temper a non-solute residue

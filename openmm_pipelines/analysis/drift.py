@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from . import plots
-from .dssp import ss_fractions
+from .dssp import dssp_timeline, ss_fractions
 from .metrics import radius_of_gyration, rmsd_to_reference, rmsf_per_residue
 
 
@@ -40,6 +40,8 @@ def drift_report(traj, reference, adir, x, xlabel, rmsd_title) -> tuple[dict, di
                           "radius of gyration", xlabel=xlabel)
     plots.plot_rmsf(resseq, rmsf, adir / "rmsf.png")
     plots.plot_ss_fractions(x, fractions, adir / "dssp.png", xlabel=xlabel)
+    dssp_codes, _ = dssp_timeline(traj)  # per-residue × per-frame SS map
+    plots.plot_dssp_timeline(dssp_codes, adir / "dssp_timeline.png")
 
     summary = {
         "rmsd_to_design_ang": {
@@ -54,6 +56,7 @@ def drift_report(traj, reference, adir, x, xlabel, rmsd_title) -> tuple[dict, di
     }
     arrays = {
         "rmsd_ang": rmsd, "rg_ang": rg, "resseq": resseq, "rmsf_ang": rmsf,
+        "dssp_codes": dssp_codes,
         **{f"ss_{name}": frac for name, frac in fractions.items()},
     }
     return summary, arrays

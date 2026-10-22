@@ -24,12 +24,14 @@ dependencies:
   # ── Scientific stack ────────────────────────────────────────────────
   - numpy
   - scipy
+  - scikit-learn        # optional DBSCAN clustering method (analysis)
   - pandas
   - numba
   - netcdf4
   - pytables
   - pyyaml
   - matplotlib-base
+  - plotly               # interactive HTML analysis report
   # ── Config + tests ──────────────────────────────────────────────────
   - pydantic>=2
   - pytest

@@ -22,6 +22,7 @@ from openmm import NonbondedForce, unit
 
 from openmm_pipelines import prepare
 from openmm_pipelines import rest2
+from openmm_pipelines.analysis.config import AnalysisConfig
 from openmm_pipelines.analysis.rest2 import analyze_rest2
 from openmm_pipelines.lib.selections import protein_atoms
 from openmm_pipelines.lib.system_edits import strip_barostats
@@ -130,7 +131,7 @@ def test_run_writes_contract(rest2_run):
 
 def test_analyze_demuxes_reference_lambda(rest2_run):
     cfg = rest2_run
-    adir = analyze_rest2(cfg.outdir, reference_state=0)
+    adir = analyze_rest2(cfg.outdir, AnalysisConfig(reference_state=0))
 
     exchange = json.loads((adir / "exchange_report.json").read_text())
     assert exchange["n_states"] == 3
@@ -140,9 +141,10 @@ def test_analyze_demuxes_reference_lambda(rest2_run):
     assert summary["reference_state"] == 0
     assert summary["n_frames_demuxed"] >= 1
     assert summary["rmsd_to_design_ang"]["mean"] >= 0.0
-    assert summary["n_clusters"] >= 1  # λ=1 ensemble clustered (Cα-RMSD)
+    assert summary["clustering"]["n_clusters"] >= 1  # λ=1 ensemble clustered (Cα-RMSD)
 
     assert (adir / "state00_ensemble.xtc").exists()     # PBC-imaged, desolvated, aligned, centered
     assert (adir / "state00_topology.pdb").exists()
     assert (adir / "acceptance.png").exists()
     assert (adir / "replica_walk.png").exists()
+    assert (adir / "rest2_report.html").exists()  # interactive overview

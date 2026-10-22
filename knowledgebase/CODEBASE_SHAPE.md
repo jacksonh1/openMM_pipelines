@@ -54,7 +54,7 @@ folder per **engine**. `[BUILT]` = exists; everything else is planned.
 ```
 openmm_pipelines/
   __init__.py              # public API
-  config.py                # PrepConfig (base), MultiStateProductionConfig, BoxShape  [BUILT]
+  config.py                # PrepConfig (base; + storage_directory), MultiStateProductionConfig, BoxShape [BUILT]
   forcefield.py            # ProteinFF, WaterModel, NonbondedSpec, resolve(),
                            #   ForceFieldError, registries                      [BUILT]
   exchange.py              # neighbor_acceptance(reporter): shared multistate mixing primitive [BUILT]
@@ -66,11 +66,12 @@ openmm_pipelines/
     selections.py          #   protein_heavy_atoms (restraints), protein_atoms (REST2 solute) [BUILT]
     system_edits.py        #   clone_system, strip_barostats (NVT; shared by remd+rest2)      [BUILT]
     platforms.py           #   is_gpu, gpu_props (mixed-precision props), precision_label      [BUILT]
+    run_layout.py          #   RunLayout (storage_directory offload/record/mirror/clean) + read_storage_directory [BUILT]
 
   preparation/             # the prepare side of the seam (shared by all engines)
     __init__.py
     prepare.py             #   prepare(cfg) -> EquilibratedSystem  (composer)   [BUILT]
-    build.py               #   build_system -> BuiltSystem; disulfide+water guards [BUILT]
+    build.py               #   build_system -> BuiltSystem; disulfide+water+internal-gap guards [BUILT]
     minimize.py            #   minimize (static energy min + finite-E guard)    [BUILT]
     equilibration_steps.py #   equilibrate_nvt, add_barostat, equilibrate_density [BUILT]
     handoff.py             #   BuiltSystem, EquilibratedSystem (to_disk/from_disk(outdir)) [BUILT]
@@ -94,14 +95,18 @@ openmm_pipelines/
     production.py          #   run(eq, cfg) -> Path  (N pre-scaled Systems, all at physical T0, NVT)  [BUILT]
 
   analysis/                # mdtraj-based, in-package  [BUILT]
-    __init__.py            #   analyze(outdir) composer + re-exports
+    __init__.py            #   analyze(outdir, config) composer + re-exports; mirrors overview to storage
+    config.py              #   AnalysisConfig (pure pydantic) — all analysis knobs, serialized to report
     trajectory.py          #   load (cif topo via openmm) + image_molecules + strip + superpose to input
     metrics.py             #   rmsd_to_reference / radius_of_gyration / rmsf_per_residue (Å)
-    dssp.py                #   secondary_structure, ss_fractions (mdtraj compute_dssp)
-    clustering.py          #   pairwise_rmsd + cluster_conformations (scipy hierarchical)
-    plots.py               #   rmsd / rg / rmsf / dssp PNGs (matplotlib Agg)
+    dssp.py                #   secondary_structure, ss_fractions, dssp_timeline (per-residue SS map)
+    clustering.py          #   ClusterResult; cluster_conformations (hierarchical default + optional
+                           #     DBSCAN [cluster] extra); representatives + populations + design-anchored
+    interchain.py          #   min-image interchain min-dist/contacts/COM + per-chain RMSD; auto at >=2 chains
+    plots.py               #   rmsd / rg / rmsf / dssp / dssp_timeline / cluster / interchain PNGs (matplotlib Agg)
+    report.py              #   write_html_report: self-contained interactive Plotly report.html ([report] extra)
     drift.py               #   drift_report: RMSD/Rg/RMSF/SS + plots vs design pose,
-                           #     shared primitive used by analyze + analyze_remd         [BUILT]
+                           #     shared primitive used by analyze + analyze_multistate    [BUILT]
     multistate.py          #   [BUILT] shared REMD/REST2 core: exchange/mixing diagnostics
                            #     (openmmtools analyzer) + de-multiplex a fixed-state ensemble (needs [remd])
     remd.py                #   [BUILT] thin wrapper: remd/ + remd.nc, analyze_remd (reference = T_min)
@@ -170,6 +175,11 @@ Core OpenMM bundles every protein force field needed — **no `openmmforcefields
 dependency** (verified against OpenMM 8.6.1 in `openmm_env`). `mdtraj` is the single
 trajectory library (no MDAnalysis). `openmmtools` is required only for the future
 REMD/REST2 backends — an **optional `[remd]` extra**, not a core dep of plain MD.
+`scikit-learn` is required only for the optional DBSCAN clustering method — an
+**optional `[cluster]` extra** (lazy-imported); the default hierarchical clustering uses
+only `scipy`. `plotly` is required only for the interactive HTML report
+(`analysis/report.py`) — an **optional `[report]` extra** (lazy-imported). `storage_directory`
+file placement (`lib/run_layout.RunLayout`) is pure stdlib (no extra dep).
 
 ## Design conventions (quick reference)
 

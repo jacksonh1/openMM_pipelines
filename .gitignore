@@ -5,6 +5,7 @@ examples/REST2_demo/demo_rest2_out/
 demo_short_run_*.out
 
 
+tools/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/

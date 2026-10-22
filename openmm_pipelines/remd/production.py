@@ -26,6 +26,7 @@ from openmmtools.multistate import MultiStateReporter, ReplicaExchangeSampler
 
 from ..context_cache import configure_global_platform
 from ..exchange import neighbor_acceptance
+from ..lib.run_layout import RunLayout
 from ..lib.system_edits import strip_barostats
 from ..reports import REMDRunReport, write_json
 from .ladder import geometric_ladder
@@ -44,13 +45,14 @@ def _ladder(cfg) -> list[float]:
 
 
 def run(eq: EquilibratedSystem, cfg: REMDConfig) -> Path:
+    layout = RunLayout(cfg.outdir, cfg.storage_directory)
     outdir = cfg.outdir / "remd"
     outdir.mkdir(parents=True, exist_ok=True)
 
     configure_global_platform(cfg.platform)
 
     temperatures = _ladder(cfg)
-    write_json({"temperatures_k": temperatures}, outdir / "ladder.json")
+    write_json({"temperatures_k": temperatures}, layout.record("remd/ladder.json"))
 
     system = strip_barostats(eq.system)
     thermo_states = [
@@ -76,9 +78,13 @@ def run(eq: EquilibratedSystem, cfg: REMDConfig) -> Path:
         online_analysis_interval=None,
     )
 
+    # The .nc + its checkpoint are the huge raw files: write them directly onto storage and
+    # symlink into outdir (offload). The reader derives "<stem>_checkpoint.nc" next to the
+    # storage path, so the checkpoint symlink must carry that exact name.
     reporter = MultiStateReporter(
-        str(outdir / _NC),
+        str(layout.offload(f"remd/{_NC}")),
         checkpoint_interval=cfg.checkpoint_interval_iterations,
+        checkpoint_storage=str(layout.offload("remd/remd_checkpoint.nc")),
     )
     try:
         sampler.create(thermo_states, [sampler_state] * len(temperatures), storage=reporter)
@@ -90,11 +96,12 @@ def run(eq: EquilibratedSystem, cfg: REMDConfig) -> Path:
         wall_seconds = time.perf_counter() - t0
 
         report = _run_report(reporter, cfg, temperatures, wall_seconds)
-        write_json(report, outdir / "run_report.json")
+        write_json(report, layout.record("remd/run_report.json"))
     finally:
         # Always release the .nc handle, even on a crashed run — openmmtools otherwise
         # "cowardly refuses to overwrite" the orphaned file on rerun (GOTCHAS.md).
         reporter.close()
+        layout.mirror("remd")  # copy the small files into storage (storage = full record)
     return outdir
 
 

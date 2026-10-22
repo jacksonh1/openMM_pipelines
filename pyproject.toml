@@ -20,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 remd = ["openmmtools"]                   # only the REMD / REST2 backends need it
+cluster = ["scikit-learn"]               # only the optional DBSCAN clustering method needs it
+report = ["plotly"]                       # only the interactive HTML analysis report needs it
 test = ["pytest"]
 
 # NOTE: openmm + pdbfixer are distributed via conda-forge. The intended install is

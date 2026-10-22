@@ -13,7 +13,9 @@ import pytest
 
 from openmm_pipelines import prepare
 from openmm_pipelines import remd
+from openmm_pipelines.analysis.config import AnalysisConfig
 from openmm_pipelines.analysis.remd import analyze_remd
+from openmm_pipelines.lib.run_layout import RunLayout, read_storage_directory
 from openmm_pipelines.remd.config import REMDConfig
 
 pytestmark = pytest.mark.slow
@@ -57,7 +59,7 @@ def test_run_writes_contract(remd_run):
 
 def test_analyze_demuxes_reference_state(remd_run):
     outdir, cfg = remd_run
-    adir = analyze_remd(outdir, reference_state=0)
+    adir = analyze_remd(outdir, AnalysisConfig(reference_state=0))
 
     exchange = json.loads((adir / "exchange_report.json").read_text())
     assert exchange["n_states"] == 3
@@ -69,8 +71,40 @@ def test_analyze_demuxes_reference_state(remd_run):
     assert summary["reference_state"] == 0
     assert summary["n_frames_demuxed"] >= 1
     assert summary["rmsd_to_design_ang"]["mean"] >= 0.0
-    assert summary["n_clusters"] >= 1  # T_min ensemble clustered (Cα-RMSD)
+    assert summary["clustering"]["n_clusters"] >= 1  # T_min ensemble clustered (Cα-RMSD)
 
     assert (adir / "state00_ensemble.xtc").exists()
     assert (adir / "acceptance.png").exists()
     assert (adir / "replica_walk.png").exists()
+    assert (adir / "remd_report.html").exists()  # interactive overview
+
+
+def test_storage_directory_offloads_nc_and_completes_record(tmp_path):
+    """With storage_directory set, the .nc + checkpoint are symlinks in outdir with bytes in
+    storage, small files + the analysis overview are copied into storage (the full record)."""
+    outdir = tmp_path / "run"
+    storage = tmp_path / "store"
+    cfg = REMDConfig(
+        pdb_in=STRUCT, outdir=outdir, storage_directory=storage, platform=PLATFORM,
+        padding_nm=0.6, nvt_equil_ns=0.002, density_seg_steps=100, density_min_seg=2,
+        density_max_seg=4, density_tol_rel=0.5, n_replicas=3, max_temperature_k=330.0,
+        total_ns=0.001, exchange_attempt_ps=0.1, equilibration_ns=0.0002, checkpoint_ps=0.1,
+    )
+    eq = prepare(cfg)
+    remd.run(eq, cfg)
+
+    layout = RunLayout(outdir, read_storage_directory(outdir))
+    home = layout.storage_home
+    # raw .nc + checkpoint: symlinks in outdir, real bytes in storage
+    for name in ("remd.nc", "remd_checkpoint.nc"):
+        assert (outdir / "remd" / name).is_symlink()
+        assert (home / "remd" / name).exists() and not (home / "remd" / name).is_symlink()
+    # small files mirrored into storage (storage = complete record)
+    assert (home / "remd" / "run_report.json").exists()
+    assert (home / "remd" / "ladder.json").exists()
+
+    # analysis works through the symlinks and mirrors its overview into storage too
+    adir = analyze_remd(outdir, AnalysisConfig(reference_state=0))
+    assert adir == outdir / "analysis"  # top-level, consistent with plain MD
+    assert (adir / "remd_analysis_report.json").exists()
+    assert (home / "analysis" / "remd_analysis_report.json").exists()

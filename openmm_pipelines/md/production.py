@@ -19,6 +19,7 @@ from openmm import LangevinMiddleIntegrator, Platform, unit
 from openmm.app import CheckpointReporter, Simulation, StateDataReporter, XTCReporter
 
 from ..lib.platforms import gpu_props
+from ..lib.run_layout import RunLayout
 from ..reports import RunReport, write_json
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 
 def run(eq: EquilibratedSystem, cfg: MDConfig) -> Path:
+    layout = RunLayout(cfg.outdir, cfg.storage_directory)
     prod = cfg.outdir / "production"
     prod.mkdir(parents=True, exist_ok=True)
 
@@ -46,8 +48,13 @@ def run(eq: EquilibratedSystem, cfg: MDConfig) -> Path:
         cfg.temperature_k * unit.kelvin, cfg.seed if cfg.seed is not None else 0
     )
 
-    log_path = prod / "production.log"
-    sim.reporters.append(XTCReporter(str(prod / "trajectory.xtc"), cfg.traj_steps))
+    # Only the trajectory is a huge raw file (offload to storage, symlink in outdir); the log,
+    # checkpoint, portable state and QC report are small and stay real in outdir (then mirrored).
+    log_path = layout.record("production/production.log")
+    chk_path = layout.record("production/production.chk")
+    sim.reporters.append(
+        XTCReporter(str(layout.offload("production/trajectory.xtc")), cfg.traj_steps)
+    )
     sim.reporters.append(
         StateDataReporter(
             str(log_path), cfg.traj_steps, step=True, time=True,
@@ -56,18 +63,20 @@ def run(eq: EquilibratedSystem, cfg: MDConfig) -> Path:
             speed=True, totalSteps=cfg.prod_steps,
         )
     )
-    sim.reporters.append(
-        CheckpointReporter(str(prod / "production.chk"), cfg.checkpoint_steps)
-    )
+    sim.reporters.append(CheckpointReporter(str(chk_path), cfg.checkpoint_steps))
 
-    t0 = time.perf_counter()
-    sim.step(cfg.prod_steps)
-    wall_seconds = time.perf_counter() - t0
+    try:
+        t0 = time.perf_counter()
+        sim.step(cfg.prod_steps)
+        wall_seconds = time.perf_counter() - t0
 
-    sim.saveState(str(prod / "final_state.xml"))  # portable restart
-    sim.saveCheckpoint(str(prod / "production.chk"))  # exact, same-hardware restart
+        sim.saveState(str(layout.record("production/final_state.xml")))  # portable restart
+        sim.saveCheckpoint(str(chk_path))  # exact, same-hardware restart
 
-    write_json(_run_report(log_path, cfg, wall_seconds), prod / "run_report.json")
+        write_json(_run_report(log_path, cfg, wall_seconds),
+                   layout.record("production/run_report.json"))
+    finally:
+        layout.mirror("production")  # copy the small files into storage (storage = full record)
     return prod
 
 

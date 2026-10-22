@@ -13,6 +13,7 @@ from __future__ import annotations
 import mdtraj as md
 
 from . import multistate
+from .config import AnalysisConfig
 
 _SUBDIR = "rest2"
 _NC = "rest2.nc"
@@ -26,14 +27,11 @@ def demux_state(rest2_dir, state_index: int) -> md.Trajectory:
     return multistate.demux_state(rest2_dir, _NC, state_index)
 
 
-def analyze_rest2(outdir, reference_state: int = 0, cluster_cutoff_ang: float = 2.0):
-    """Full REST2 analysis on the fixed-λ ensemble of `reference_state` (0 = λ=1).
+def analyze_rest2(outdir, config: AnalysisConfig | None = None):
+    """Full REST2 analysis on the fixed-λ ensemble of `config.reference_state` (0 = λ=1).
 
-    Writes `outdir/rest2/analysis/`: exchange_report.json, mixing plots, the de-multiplexed
-    λ=1 ensemble, the drift report (RMSD/Rg/RMSF/SS vs the input pose), and its conformational
-    clusters (Cα-RMSD within `cluster_cutoff_ang` Å).
+    Writes `outdir/analysis/`: exchange_report.json, mixing plots, the de-multiplexed λ=1
+    ensemble, the drift report (RMSD/Rg/RMSF/SS vs the input pose), conformational clusters, and
+    interchain metrics for a complex.
     """
-    return multistate.analyze_multistate(
-        outdir, _SUBDIR, _NC, prefix="rest2",
-        reference_state=reference_state, cluster_cutoff_ang=cluster_cutoff_ang,
-    )
+    return multistate.analyze_multistate(outdir, _SUBDIR, _NC, prefix="rest2", config=config)

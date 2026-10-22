@@ -30,6 +30,19 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [x] `analysis/` — `trajectory` (load + PBC image + strip + superpose to input), `metrics` (RMSD/Rg/RMSF, Å), `dssp`, `clustering` (scipy), `plots`, `analyze(outdir)` composer. Validated on demo_out (5 synthetic + 1 smoke test). (2026-10-01)
 - [ ] `__init__.py` top-level + `core/`/`md/` re-exports; `README.md` usage.
 
+## Analysis output upgrades (2026-10-21; see DECISIONS/HISTORY)
+
+- [x] `analysis/config.py` — `AnalysisConfig` (pure pydantic), serialized into every report; composers take `config`.
+- [x] Clustering overhaul — `ClusterResult`, hierarchical default (auto-stride, recorded) + optional DBSCAN (`[cluster]` extra, scikit-learn), representative PDBs + populations + plots, design-anchored (rep RMSD-to-design, design-like fraction). Fixed noise-in-`n_clusters` + frame-index-through-stride.
+- [x] `analysis/interchain.py` — min distance / contact count / COM distance (min-image) + per-chain RMSD; auto-run at ≥2 chains; positional chain correspondence; computed pre-superposition.
+- [x] `build._assert_no_internal_gaps` — prep-phase chain-integrity guard (so analysis trusts chain counts).
+- [x] `lib/run_layout.py` `RunLayout` + `storage_directory` on `PrepConfig` — offload/record/mirror/clean, deterministic collision-proof folder, O_EXCL marker; wired into md/remd/rest2 production + analysis composers.
+- [x] `analysis/report.py` — self-contained interactive Plotly `report.html` (optional `[report]` extra), on by default (`AnalysisConfig.html_report`), mirrored into storage.
+- [x] Per-residue DSSP timeline (`dssp.dssp_timeline` + `plots.plot_dssp_timeline`) → `analysis/dssp_timeline.png` + an interactive report heatmap; figure size bounded on both axes (GROMACS-style). (mdtraj DSSP lacks DSSP-4 PP-II/`=`; mkdssp-4 backend is a possible follow-on.)
+- [x] Output layout: clustering artifacts → `analysis/clustering/`; multistate analysis → top-level `outdir/analysis/` (consistent with plain MD).
+- [ ] `storage status`/gc helper — list orphaned storage folders (marker points to a gone/relinked outdir). Marker enables it; not yet built.
+- [ ] Optional: content/config hash recorded for dedup (run identity stays outdir; layout unchanged).
+
 ## Science-review items to resolve before trusting production
 
 - [ ] Restraint `x0` (absolute) vs MC barostat COM rescaling — confirm benign.
@@ -44,7 +57,7 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 
 ## Open design decisions
 
-- [ ] **Output contract** — what files `prepare()` / `run()` write, layout, naming. Topology output settled (needed for reload + analysis); the rest deferred to a dedicated discussion.
+- [~] **Output contract** — layout stable (prepare / production / remd|rest2 / analysis subdirs); run identity = **outdir** (path-based, decided 2026-10-21, not content-addressed); `storage_directory` offload/mirror added via `RunLayout`. Exact file naming/formats still open for a dedicated pass.
 - [x] REMD production ensemble default: **NVT** (decided 2026-10-06; see DECISIONS).
 - [x] REMD/REST2 backend home: per-engine folders; `[remd]` extra gates the openmmtools import and `remd/`+`analysis/remd.py` are not eagerly imported. (2026-10-06)
 - [x] `analysis/remd.py` single module (not nested) — kept one module. (2026-10-06)

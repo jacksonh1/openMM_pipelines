@@ -29,8 +29,14 @@ class PrepConfig(BaseModel, frozen=True):
     # --- system ---
     pdb_in: Path
     outdir: Path
-    protein_ff: ProteinFF = ProteinFF.AMBER14SB
-    water: WaterModel = WaterModel.TIP3P
+    # Optional separate home for the run's bulk files: when set, the huge raw simulation
+    # files (solvated trajectory, .nc + checkpoints) live under storage_directory and are
+    # symlinked into outdir; small files + analysis outputs are copied to both, so
+    # storage_directory is the complete record and outdir a lightweight working view.
+    # None = everything real in outdir (default). See lib/run_layout.RunLayout.
+    storage_directory: Path | None = None
+    protein_ff: ProteinFF = ProteinFF.AMBER19SB  # QM-trained backbone-CMAP; modern default
+    water: WaterModel = WaterModel.OPC  # ff19SB's parameterization water (required for AMBER19SB)
     ph: float = 7.4  # physiological; PDBFixer protonation heuristic
     box_shape: BoxShape = BoxShape.DODECAHEDRON
     padding_nm: float = 1.0  # minimum solute-to-box-edge distance
@@ -71,8 +77,8 @@ class PrepConfig(BaseModel, frozen=True):
             warnings.warn(
                 f"{self.protein_ff.name} is recommended with "
                 f"{_RECOMMENDED_WATER[self.protein_ff].name}; you chose {self.water.name}. "
-                "Proceeding — verify this is intentional (e.g. ff19SB+TIP3P is a "
-                "known-degraded pairing).",
+                "Proceeding — verify this is intentional (e.g. ff14SB with a 4-site water). "
+                "A FF whose water is mandatory, such as ff19SB, is rejected outright by resolve().",
                 stacklevel=2,
             )
         if self.dt_ps > 0.0025:  # HMR sanity: 4 fs without repartitioned H is unstable

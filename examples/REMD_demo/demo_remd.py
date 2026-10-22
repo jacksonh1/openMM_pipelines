@@ -11,6 +11,7 @@ ensemble before measuring drift from the design pose. See `replica_walk.png`.
 from pathlib import Path
 
 from openmm_pipelines import ProteinFF, WaterModel, prepare, remd
+from openmm_pipelines.analysis.config import AnalysisConfig
 from openmm_pipelines.analysis.remd import analyze_remd
 from openmm_pipelines.remd.config import REMDConfig
 
@@ -52,7 +53,7 @@ def main() -> None:
 
     eq = prepare(cfg)
     remd.run(eq, cfg)
-    analyze_remd(cfg.outdir, reference_state=0)
+    analyze_remd(cfg.outdir, AnalysisConfig(reference_state=0))  # state 0 = T_min ensemble
 
     print(f"\n=== outputs in {cfg.outdir} ===")
     for rel in (
@@ -60,8 +61,8 @@ def main() -> None:
         "prepared/prep_report.json",
         "remd/ladder.json",
         "remd/run_report.json",
-        "remd/analysis/exchange_report.json",
-        "remd/analysis/remd_analysis_report.json",
+        "analysis/exchange_report.json",
+        "analysis/remd_analysis_report.json",
     ):
         print(f"\n----- {rel} -----")
         print((cfg.outdir / rel).read_text())

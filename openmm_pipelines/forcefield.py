@@ -29,7 +29,7 @@ class NonbondedSpec(NamedTuple):
 class ProteinFF(Enum):
     AMBER99SBILDN = "amber99sbildn.xml"  # legacy; for reproducing older work
     AMBER14SB = "amber14/protein.ff14SB.xml"
-    AMBER19SB = "amber19/protein.ff19SB.xml"  # QM-trained backbone; recommended with OPC
+    AMBER19SB = "amber19/protein.ff19SB.xml"  # QM-trained backbone (CMAP); REQUIRES OPC (resolve)
     CHARMM36 = "charmm36.xml"  # original C36  (par_all36_prot)
     CHARMM36M = "charmm36_2024.xml"  # C36m      (par_all36m_prot)
     # CRITICAL: CHARMM36 != CHARMM36M. 36m is the Huang-2017 backbone-CMAP + glycine
@@ -78,7 +78,7 @@ class WaterModel(Enum):
     OPC3 = ("opc3", 3)
     TIP4PEW = ("tip4pew", 4)
     TIP4PFB = ("tip4pfb", 4)
-    OPC = ("opc", 4)  # 4-site; recommended with ff19SB
+    OPC = ("opc", 4)  # 4-site; the water ff19SB was parameterized with (required by AMBER19SB)
 
     @property
     def stem(self) -> str:
@@ -102,9 +102,18 @@ _PACKING_BOX = {3: "tip3p", 4: "tip4pew", 5: "tip5p"}  # site count -> addSolven
 _RECOMMENDED_WATER = {
     ProteinFF.AMBER99SBILDN: WaterModel.TIP3P,
     ProteinFF.AMBER14SB: WaterModel.TIP3P,
-    ProteinFF.AMBER19SB: WaterModel.OPC,  # ff19SB trained for OPC; TIP3P degrades it
+    ProteinFF.AMBER19SB: WaterModel.OPC,  # ff19SB trained for OPC; enforced (see _REQUIRED_WATER)
     ProteinFF.CHARMM36: WaterModel.TIP3P,  # CHARMM-modified TIP3P (see resolve)
     ProteinFF.CHARMM36M: WaterModel.TIP3P,
+}
+
+# HARD requirement, not a recommendation: these FFs are a correctness error with any other
+# water, so `resolve` raises rather than warning. ff19SB was jointly fit with OPC (Tian et al.
+# 2020, JCTC 16:528) — its backbone-CMAP + sidechain params assume OPC's charge/polarization,
+# and TIP3P gives an unbalanced, over-compact model. (CHARMM's TIP3P lock is enforced in the
+# CHARMM branch of `resolve` instead, because it also redirects the water XML path.)
+_REQUIRED_WATER = {
+    ProteinFF.AMBER19SB: WaterModel.OPC,
 }
 
 
@@ -115,6 +124,13 @@ def resolve(protein: ProteinFF, water: WaterModel) -> tuple[list[str], str]:
     can never disagree — and the packing geometry is chosen by site count in ONE
     place.
     """
+    required = _REQUIRED_WATER.get(protein)  # None = water is a free choice for this FF
+    if required is not None and water is not required:
+        raise ForceFieldError(
+            f"{protein.name} must use {required.name} water: it was parameterized with "
+            f"{required.name}, and another model (e.g. TIP3P) gives a known-degraded force "
+            f"field, not a tunable choice. Got {water.name}."
+        )
     fam = protein.family
     if fam in ("charmm36", "charmm36_2024"):
         # CHARMM water is version-locked to its protein FF; only its bundled

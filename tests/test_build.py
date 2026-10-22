@@ -19,6 +19,7 @@ STRUCT = Path(__file__).parents[1] / "examples" / "input_structures" / "helix_fu
 @pytest.fixture(scope="module")
 def tip3p_build(tmp_path_factory):
     cfg = MDConfig(pdb_in=STRUCT, outdir=tmp_path_factory.mktemp("tip3p"),
+                   protein_ff=ProteinFF.AMBER14SB, water=WaterModel.TIP3P,  # pin: this tests 3-site
                    padding_nm=0.8)  # small box -> faster test
     return build_system(cfg), cfg
 

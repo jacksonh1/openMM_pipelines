@@ -29,10 +29,14 @@ from openmm.app import PDBxFile
 from openmmtools.multistate import MultiStateReporter, ReplicaExchangeAnalyzer
 
 from ..exchange import neighbor_acceptance
+from ..lib.run_layout import RunLayout, read_storage_directory
 from ..reports import write_json
 from . import plots
-from .clustering import cluster_conformations
+from .clustering import cluster_and_report, cluster_summary
+from .config import AnalysisConfig
 from .drift import drift_report
+from .interchain import interchain_report, protein_chain_ids
+from .report import write_html_report
 from .trajectory import load_input_reference, superpose_to_reference, to_protein
 
 
@@ -122,74 +126,85 @@ def demux_state(run_dir, nc_name: str, state_index: int) -> md.Trajectory:
 
 
 def analyze_multistate(
-    outdir,
-    subdir: str,
-    nc_name: str,
-    prefix: str,
-    reference_state: int = 0,
-    cluster_cutoff_ang: float = 2.0,
+    outdir, subdir: str, nc_name: str, prefix: str, config: AnalysisConfig | None = None
 ) -> Path:
-    """Exchange/mixing diagnostics + drift metrics + conformational clustering on the
-    fixed-state ensemble of `reference_state` (default 0 = the design-reference rung: T_min
-    for REMD, λ=1 for REST2). That demuxed ensemble is a Boltzmann sample at the design
-    temperature, so clustering it (Cα-RMSD, `cluster_cutoff_ang` Å) partitions the sampled
-    conformations. Writes `outdir/<subdir>/analysis/`.
+    """Exchange/mixing diagnostics + drift metrics + conformational clustering (+ interchain
+    metrics for a complex) on the fixed-state ensemble of `config.reference_state` (default 0 =
+    the design-reference rung: T_min for REMD, λ=1 for REST2). That demuxed ensemble is a
+    Boltzmann sample at the design temperature. Writes `outdir/analysis/` (top-level, consistent
+    with plain MD; the `.nc` stays under `outdir/<subdir>/`).
     """
     outdir = Path(outdir)
-    run_dir = outdir / subdir
-    adir = run_dir / "analysis"
+    config = config or AnalysisConfig()
+    reference_state = config.reference_state
+    layout = RunLayout(outdir, read_storage_directory(outdir))
+    run_dir = outdir / subdir  # the .nc + checkpoint live here (read-only)
+    adir = outdir / "analysis"  # analysis output is top-level, consistent with plain MD
     adir.mkdir(parents=True, exist_ok=True)
 
-    diag = exchange_diagnostics(run_dir, nc_name)
-    replica_states = diag.pop("replica_states")
-    write_json(diag, adir / "exchange_report.json")
+    try:
+        diag = exchange_diagnostics(run_dir, nc_name)
+        replica_states = diag.pop("replica_states")
+        write_json(diag, adir / "exchange_report.json")
 
-    plots.plot_neighbor_acceptance(diag["neighbor_acceptance"], adir / "acceptance.png")
-    plots.plot_replica_state_walk(replica_states, adir / "replica_walk.png")
+        plots.plot_neighbor_acceptance(diag["neighbor_acceptance"], adir / "acceptance.png")
+        plots.plot_replica_state_walk(replica_states, adir / "replica_walk.png")
 
-    # Fixed-state ensemble at the reference rung, measured against the design pose. Fully
-    # processed for both metrics and viewing: PBC-imaged (in demux_state), desolvated
-    # (to_protein), aligned to the design pose, then origin-centered on the frame-0 centroid.
-    # This writes new analysis artifacts only; the raw sim output (the .nc) is read-only.
-    traj = to_protein(demux_state(run_dir, nc_name, reference_state))
-    reference = load_input_reference(outdir)
-    superpose_to_reference(traj, reference)
-    traj.xyz -= traj.xyz[0].mean(axis=0)  # center frame-0 geometric center at the origin
+        # Fixed-state ensemble at the reference rung (PBC-imaged in demux_state, desolvated), NOT
+        # yet superposed. Demuxed frames are an ensemble ordered by iteration, not a time series.
+        traj = to_protein(demux_state(run_dir, nc_name, reference_state))
+        reference = load_input_reference(outdir)
+        frame_index = np.arange(traj.n_frames, dtype=float)
 
-    traj.save_xtc(str(adir / f"state{reference_state:02d}_ensemble.xtc"))
-    traj[0].save_pdb(str(adir / f"state{reference_state:02d}_topology.pdb"))
+        # Interchain metrics first: minimum-image-based, so they need coordinates + box in the
+        # same frame — before the superposition that rotates the coordinates.
+        interchain_summary = None
+        interchain_arrays: dict = {}
+        chains = protein_chain_ids(traj)
+        if len(chains) >= 2 and config.interchain:
+            interchain_summary, interchain_arrays = interchain_report(
+                traj, reference, adir, frame_index, "demuxed frame", config
+            )
 
-    # Demuxed frames are an ensemble ordered by iteration, not a continuous time series.
-    frame_index = np.arange(traj.n_frames, dtype=float)
-    drift, arrays = drift_report(
-        traj, reference, adir, frame_index, "demuxed frame",
-        f"reference ensemble (state {reference_state})",
-    )
+        # Align to the design pose + origin-center for the viewable ensemble, drift, clustering.
+        superpose_to_reference(traj, reference)
+        traj.xyz -= traj.xyz[0].mean(axis=0)  # center frame-0 geometric center at the origin
+        traj.save_xtc(str(adir / f"state{reference_state:02d}_ensemble.xtc"))
+        traj[0].save_pdb(str(adir / f"state{reference_state:02d}_topology.pdb"))
 
-    # Conformational clusters of the demuxed ensemble (Cα-RMSD, average-linkage).
-    cluster_labels = (
-        cluster_conformations(traj, cluster_cutoff_ang)
-        if traj.n_frames >= 2
-        else np.array([1])
-    )
+        drift, arrays = drift_report(
+            traj, reference, adir, frame_index, "demuxed frame",
+            f"reference ensemble (state {reference_state})",
+        )
+        cluster = cluster_and_report(
+            traj, reference, config, adir, frame_index, "demuxed frame index"
+        )
 
-    np.savez(
-        adir / f"{prefix}_analysis_data.npz",
-        frame_index=frame_index, replica_states=replica_states,
-        neighbor_acceptance=np.asarray(diag["neighbor_acceptance"]),
-        cluster_labels=cluster_labels, **arrays,
-    )
+        npz = dict(
+            frame_index=frame_index, replica_states=replica_states,
+            neighbor_acceptance=np.asarray(diag["neighbor_acceptance"]),
+            cluster_labels=cluster.labels, cluster_frame_indices=cluster.frame_indices, **arrays,
+        )
+        npz.update(interchain_arrays)
+        np.savez(adir / f"{prefix}_analysis_data.npz", **npz)
 
-    summary = {
-        "reference_state": reference_state,
-        "mean_neighbor_acceptance": diag["mean_neighbor_acceptance"],
-        "min_neighbor_acceptance": diag["min_neighbor_acceptance"],
-        "subdominant_eigenvalue": diag["subdominant_eigenvalue"],
-        "state_statistical_inefficiency": diag["state_statistical_inefficiency"],
-        "n_frames_demuxed": int(traj.n_frames),
-        "cluster_cutoff_ang": cluster_cutoff_ang,
-        "n_clusters": int(len(set(cluster_labels.tolist()))),
-        **drift,
-    }
-    write_json(summary, adir / f"{prefix}_analysis_report.json")
+        summary = {
+            "reference_state": reference_state,
+            "mean_neighbor_acceptance": diag["mean_neighbor_acceptance"],
+            "min_neighbor_acceptance": diag["min_neighbor_acceptance"],
+            "subdominant_eigenvalue": diag["subdominant_eigenvalue"],
+            "state_statistical_inefficiency": diag["state_statistical_inefficiency"],
+            "n_frames_demuxed": int(traj.n_frames),
+            "clustering": cluster_summary(cluster),
+            "analysis_config": config.model_dump(mode="json"),
+            **drift,
+        }
+        if interchain_summary is not None:
+            summary["interchain"] = interchain_summary
+        write_json(summary, adir / f"{prefix}_analysis_report.json")
+        if config.html_report:
+            write_html_report(adir, summary, npz, "frame_index", "demuxed frame",
+                              f"{prefix} — state {reference_state}", name=f"{prefix}_report.html")
+    finally:
+        layout.mirror("analysis")  # copy the overview into storage (full record)
     return adir
