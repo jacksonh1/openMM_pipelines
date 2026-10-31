@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from openmm_pipelines.forcefield import ProteinFF, WaterModel
 from openmm_pipelines.rest2.config import REST2Config
 from openmm_pipelines.rest2.ladder import lambda_ladder
 
@@ -31,6 +32,13 @@ def test_rejects_max_eff_not_above_physical():
 def test_rejects_single_replica():
     with pytest.raises(ValueError):
         _cfg(n_replicas=1)
+
+
+def test_rejects_cation_pi_nbfix():
+    # Valid at the PrepConfig level (CHARMM36m), but REST2 cannot scale the cation-π
+    # CustomNonbondedForce, so REST2Config must refuse it at construction time.
+    with pytest.raises(ValueError):
+        _cfg(cation_pi_nbfix=True, protein_ff=ProteinFF.CHARMM36M, water=WaterModel.TIP3P)
 
 
 def test_explicit_lambdas_must_start_at_one():

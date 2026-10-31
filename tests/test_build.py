@@ -7,9 +7,15 @@ small single-chain helix_fusion.pdb to stay fast.
 from pathlib import Path
 
 import pytest
+from openmm import Vec3, unit
 from openmm.app import Element, Topology
 
-from openmm_pipelines.preparation.build import _count_disulfides, build_system
+from openmm_pipelines.preparation.build import (
+    PrepareError,
+    _assert_no_backbone_breaks,
+    _count_disulfides,
+    build_system,
+)
 from openmm_pipelines.forcefield import ProteinFF, WaterModel
 from openmm_pipelines.md.config import MDConfig
 
@@ -84,3 +90,38 @@ def test_count_disulfides_counts_sg_sg_bond():
 
 def test_count_disulfides_zero_when_unbonded():
     assert _count_disulfides(_two_cys_topology(bonded=False)) == 0
+
+
+# --- backbone-break guard (SEQRES-independent) --------------------------------
+
+def _two_residue_chain(cn_gap_nm: float):
+    """Two ALA residues in one chain; res0 C and res1 N sit `cn_gap_nm` apart."""
+    top = Topology()
+    chain = top.addChain()
+    coords = []
+
+    def _add(res, name, symbol, xyz):
+        top.addAtom(name, Element.getBySymbol(symbol), res)
+        coords.append(Vec3(*xyz))
+
+    r0 = top.addResidue("ALA", chain)
+    _add(r0, "N", "N", (0.0, 0.0, 0.0))
+    _add(r0, "CA", "C", (0.15, 0.0, 0.0))
+    _add(r0, "C", "C", (0.30, 0.0, 0.0))
+    r1 = top.addResidue("ALA", chain)
+    x = 0.30 + cn_gap_nm
+    _add(r1, "N", "N", (x, 0.0, 0.0))
+    _add(r1, "CA", "C", (x + 0.15, 0.0, 0.0))
+    _add(r1, "C", "C", (x + 0.30, 0.0, 0.0))
+    return top, unit.Quantity(coords, unit.nanometer)
+
+
+def test_backbone_break_detected():
+    top, pos = _two_residue_chain(cn_gap_nm=1.0)  # 10 A gap -> a chain break
+    with pytest.raises(PrepareError, match="backbone chain break"):
+        _assert_no_backbone_breaks(top, pos)
+
+
+def test_bonded_backbone_passes():
+    top, pos = _two_residue_chain(cn_gap_nm=0.133)  # a real peptide bond
+    _assert_no_backbone_breaks(top, pos)  # no raise

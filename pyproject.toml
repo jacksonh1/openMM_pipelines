@@ -12,7 +12,8 @@ dependencies = [
     "pdbfixer",                          # conda-forge; structure prep + protonation
     "mdtraj",                            # the single trajectory library (no MDAnalysis)
     "numpy",
-    "scipy",                             # analysis clustering
+    "scipy",                             # analysis clustering (hierarchical)
+    "scikit-learn>=1.3",                 # default DBSCAN + HDBSCAN conformational clustering (>=1.3 ships HDBSCAN)
     "pandas",                            # production.log parsing for run_report
     "matplotlib",                        # analysis plots
     "pydantic>=2",
@@ -20,7 +21,6 @@ dependencies = [
 
 [project.optional-dependencies]
 remd = ["openmmtools"]                   # only the REMD / REST2 backends need it
-cluster = ["scikit-learn"]               # only the optional DBSCAN clustering method needs it
 report = ["plotly"]                       # only the interactive HTML analysis report needs it
 test = ["pytest"]
 

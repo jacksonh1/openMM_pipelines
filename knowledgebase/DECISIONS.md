@@ -9,6 +9,218 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-10-30 — resume / extend: continue an interrupted run (library-only, documented-mechanism)
+
+**Decision.** A top-level `resume(outdir, *, extend_to_ns=None, platform=None)` continues an
+interrupted (walltime/crash) production run — or extends it to a larger target — using the
+**documented OpenMM / openmmtools restart mechanisms**, not a hand-rolled scheme. All three engines;
+MD is first-class. Library-only: re-submitting the SLURM job (so it calls `resume` not `run`) is the
+driver's job — no SLURM coupling in the library (`resume` reads disk state only). Reviewed by the
+architect agent; correctness fixes folded in. Verified end-to-end on CPU (`tests/test_resume.py`).
+
+**Mechanisms (verified on openmm 8.6.1 / openmmtools 0.26.0).**
+- **MD**: portable State XML as the resume point (`simulation.saveState`/`loadState` — any node;
+  drops the RNG stream, so the continued trajectory differs but is physically valid — GPU runs are
+  not bit-reproducible anyway). Trajectory/log continue via reporter `append=True`. The State is
+  written **ping-pong to two alternating files** so a SIGKILL mid-write never destroys the prior good
+  one (OpenMM's `CheckpointReporter` overwrites a single file in place — no torn-write protection).
+- **REMD/REST2**: openmmtools `ReplicaExchangeSampler.from_storage(reporter)` + `run()` (finish to the
+  stored target) / `extend(n_iterations)` (extend past it). openmmtools rebuilds the whole sampler
+  from the `.nc`, so resume needs no `eq`/ladder/re-scaling.
+
+**Correctness (the MD sharp edges).** The resume checkpoint is written on a frame boundary
+(`checkpoint_steps = checkpoint_every_n_frames * traj_steps`, a multiple by construction — replaces
+`max(traj_steps*10, 5000)` which could violate it) with the checkpoint reporter registered **before**
+the trajectory/log reporters; on resume the trajectory + log are **truncated back to the checkpoint
+step** and `sim.currentStep` restored before appending. This guarantees no duplicate/divergent frames
+and keeps the XTC and log aligned and monotonic. Full rationale: GOTCHAS.md.
+
+**Engine discriminator = a `resume_manifest.json` at the outdir root**, written by `run` at the start
+of production (survives a kill), carrying `{engine, production_config}`. `resume` reconstructs the
+exact frozen config from the manifest's `production_config` (NOT `config.json`, which is the
+prepare-time `PrepConfig` and would inject silent engine defaults). Missing manifest ⇒ fail loud
+(never infer the engine from which subdir exists); a different-engine `run` into the same outdir ⇒
+fail loud (one outdir = one run/engine).
+
+**Semantics.** `extend_to_ns` is an absolute target (re-passing it after a crashed resume continues,
+not double-extends). Resuming an already-complete run with no `extend_to_ns` ⇒ fail loud; completion
+is a **derived** query (manifest target vs checkpoint/`.nc` progress), **not** a written sentinel
+file. Each resume segment writes its own `run_info.resume.<utc>.json` (provenance may differ from the
+prepare-time environment) and a per-segment `run_report.resume.<utc>.json` (does not overwrite the
+original report).
+
+**Rejected / deferred.** A `run(..., resume=True)` kwarg (different entry shape — not single-purpose);
+segmented `trajectory.partNNNN.xtc` files (truncate-to-checkpoint heals the append, so single-file is
+safe). **Deferred (not built):** the exact same-hardware binary `.chk` fast path gated by an
+environment fingerprint (portable State is the sole, sufficient resume point); a `should_stop` hook +
+non-exception `is_complete(outdir)` for a future self-requeuing SLURM driver (one-line lifts if
+auto-requeue is adopted). The output-contract block below changes accordingly: MD `production.chk`
+→ `checkpoint_state.{A,B}.xml`.
+
+## 2026-10-30 — configs round-trip to JSON; enums serialized by NAME
+
+**Decision.** `PrepConfig` gains `to_json(path)` / `from_json(path)` (inherited by all engine
+configs), and `protein_ff` / `water` serialize by enum **name**, not value. A saved config is both
+the run's provenance and a reloadable input: `submit → MDConfig.to_json → sbatch → MDConfig.from_json
+→ prepare/run`. `from_json` re-runs validation, so a bad field or FF pairing fails at load.
+
+**Why.** `prepare()` already wrote `config.json`, but it could not be read back:
+`WaterModel`'s value is the tuple `("tip3p", 3)`, which JSON stores as a list and pydantic refuses
+to coerce back to the enum — so `model_validate_json` raised. config.json was therefore write-only.
+Serializing enums by name (`"TIP3P"`, `"CHARMM36M"`) makes the file human-readable, editable, and
+round-trippable. `before` validators still accept the legacy value forms (xml string, `[name, n]`
+list) so older config.json files load.
+
+**Rejected.** (1) Passing run parameters through SLURM `--export` env vars (the GROMACS idiom) —
+stringly-typed, unvalidated until the job starts, and not the pipeline's native mechanism. (2)
+Per-run argparse flags on the driver — still re-specifies the typed config as CLI strings. (3)
+Changing `WaterModel`'s value off the tuple — invasive; the `(name, n_sites)` value is used across
+solvation/packing. A localized field (de)serializer is the smallest correct fix.
+
+**Scope note.** Nothing consumes config.json's enum fields programmatically
+(`read_storage_directory` reads only `storage_directory`; `RunInfo` reads the live cfg object), so
+the on-disk format change is safe.
+
+## 2026-10-29 — cation-π NBFIX as an opt-in, CHARMM36m-only FF overlay (not a source-file edit)
+
+**Decision.** The cation-π correction (Liu et al., JCTC 2020, 16, 6397) is a `bool` flag on
+`PrepConfig` (`cation_pi_nbfix`, default off) that makes `build_system` load a rendered
+`<LennardJonesForce>` fragment *after* the base CHARMM36m XML. The 6 pairs (Arg `NC2` + Lys
+`NH3`, each × `CA`/`CAI`/`CPT`) live as a typed table in `cation_pi.py` in the **paper's units**,
+converted to OpenMM units by a unit-tested function. Enabled only for `CHARMM36M`.
+
+**Why a table-in-paper-units + render, not a static XML.** Keeps the paper's actual Table 1
+numbers visible as the source of truth and makes the kcal→kJ / rmin→sigma conversion
+tamper-evident (a unit test pins it) rather than freezing hand-computed floats. *Rejected:* a
+static XML fragment (simpler, but the converted floats are unchecked); editing OpenMM's
+installed `charmm36_2024.xml` (not version-controlled, clobbered on reinstall).
+
+**Why opt-in + CHARMM36m-only.** It changes the force field, so it must be explicit and pinned
+(reproducibility). The values are CHARMM36m atom-class LJ parameters with no AMBER equivalent;
+`PrepConfig._check` raises `ForceFieldError` for any other FF (incl. plain C36 — the paper fit
+C36m). *Note:* NBFIX is **global by atom class** — it deepens every Arg/Lys↔aromatic contact
+(Arg–Phe/Tyr too, not just the target Arg–Trp). That is the paper's intent (uniform correction
+validated on whole proteins); a per-residue-pair restriction is not expressible as NBFIX.
+
+**Scope = the protein subset of Table 1.** Phe/Tyr are covered via the shared `CA` class (supp
+Table S2: para-cresol C = `CA`; real Tyr = `CA`). *Excluded:* `CAB` (a toy atom type the paper
+introduced only for its para-cresol free molecule — never present in a protein), TMA⁺
+(`NG3P0`/`CG334` — quaternary ammonium, CGenFF ligands/ncAAs only), His (the paper never
+parameterized imidazole). The CGenFF twin (supp Table S1) is the documented extension path for
+non-natural residues; deferred (no ncAA in use).
+
+**REST2 incompatibility made explicit.** `REST2Config._check_rest2` refuses `cation_pi_nbfix`
+at config time: the correction is a CHARMM `CustomNonbondedForce`, whose REST2 solute-scaling is
+unimplemented (`scale_solute` refuses CHARMM; see the 2026-10-06 entry + TODO). An early,
+cation-π-specific error beats the deep runtime refusal, and it stays correct even if plain-CHARMM
+REST2 lands later without cation-π-pair scaling. MD + T-REMD are unaffected (no force scaling).
+
+## 2026-10-28 — conformational clustering default: DBSCAN (noise-aware) + HDBSCAN option; no frame cap
+
+**The default `cluster_method` is now `dbscan` (was `hierarchical`), with an adaptive `min_samples`
+density floor; `hdbscan` is added as an opt-in method; `cluster_max_frames` (silent auto-stride to
+2000) is replaced by an explicit `cluster_stride` (default 1 = all frames).**
+
+**Why.** Hierarchical average-linkage with a fixed distance cut (`fcluster(criterion="distance")`)
+has no noise category: on a continuous/diffuse ensemble every pair separated by more than the cutoff
+becomes a new cluster, so it over-fragments. A real unbound-peptide run
+(`a83660d9…_openmm_md_unbound_300K_400ns_seed1`) produced **444 clusters** at the 2.0 Å cutoff
+(design-like basin rank 167, 0.2%) — the signature of a floppy continuum, not discrete states.
+DBSCAN on the design-superposed Cα coordinates keeps the *same* interpretable Å cutoff
+(`eps = cutoff·√n_atoms`, valid because callers superpose before clustering) but sends the diffuse
+tail to a **noise** label instead of singletons, and scales to all frames (no O(N²) matrix).
+
+**The real fix is the density floor, not just the method.** DBSCAN with a *fixed* `min_samples`
+(the old `=5`) would also fragment, because 5 frames is a vanishing fraction of a 40k-frame run.
+So `cluster_min_samples=None` now resolves to the adaptive `max(10, 1.5%×frames)` — a region must
+hold ~1.5% of the trajectory to be a state. (The 1.5%/floor-10 values are re-derived from the sibling
+GROMACS `gromd-cluster`, which hit and solved this same problem; the constant is **copied, not
+imported** — the two packages stay decoupled, and we do not commit to bit-identical output.)
+
+**HDBSCAN as the opt-in deep-dive.** HDBSCAN extracts each cluster at its own density scale, so it
+keeps a broad-but-populated state that a single DBSCAN `eps` would drop into noise (varying-density
+basins). Rejected as the *default* because it has no single physical Å cutoff — its partition adapts
+per run, which undercuts this module's whole job (a system-agnostic overview *comparable across
+variants*, per `config.py`). It is the right tool for enumerating one design's true metastable states.
+**Rejected QT/Daura–GROMOS** (the classic `gmx cluster` method) outright: it needs the full O(N²)
+pairwise-RMSD matrix and has no noise category — the exact cost DBSCAN avoids.
+
+**No silent frame cap.** The old path silently strided to ≤2000 frames (hierarchical's O(N²) limit).
+DBSCAN/HDBSCAN cluster all frames by default. Hierarchical stays available but fails loud above
+`MAX_HIERARCHICAL_FRAMES` (10k; a dense 40k² matrix ≈ 13 GB) telling the caller to raise
+`cluster_stride` or use dbscan — never silent decimation.
+
+**Consequences.** scikit-learn moves from the optional `[cluster]` extra to a **core dependency**
+(`>=1.3`, which ships `sklearn.cluster.HDBSCAN`); `pyproject.toml` + `environment.yml` updated. The
+population plot gained a noise bar and now takes percentages over all clustered frames (incl. noise),
+matching the report JSON. **Open:** `design_like_fraction` is read off cluster populations, so a
+design-like basin holding <1.5% of frames collapses into noise and under-reports retention — see TODO.
+
+---
+
+## 2026-10-22 — chain-break detection trusts geometry; SEQRES/REMARK are hints only
+
+**Added `_assert_no_backbone_breaks` (`preparation/build.py`): a geometry-only guard that measures the
+actual C(i)–N(i+1) distance between consecutive protein residues and fails loud above
+`_PEPTIDE_BOND_MAX_NM` (0.2 nm; a real peptide bond is ~0.133 nm).** It runs after `addMissingAtoms`,
+skips ACE/NME caps on the side they lack a backbone atom, and resets across non-protein residues. This
+is now **the** chain-break check; the pre-existing `_assert_no_internal_gaps` (SEQRES-based, via
+`PDBFixer.findMissingResidues()`) is kept only as a secondary early hint with residue-identity in its
+message.
+
+**Why geometry is the authority.** For "is residue i actually bonded to i+1," the coordinates are the
+experimental observable; everything else is annotation about them, and all the annotations fail:
+- **Author residue numbers are a label, not connectivity.** A renumbered construct can read 10,11,15,16
+  with 11 peptide-bonded straight to 15 (cosmetic gap); continuous numbers can hide a real break;
+  insertion codes (52,52A,52B) add residues with no number change. A numbering-gap heuristic is wrong in
+  both directions — rejected.
+- **SEQRES is often missing (stripped/processed files, computational models) or genuinely wrong**
+  (author/construct sequence ≠ coordinates). A hint, not truth — rejected as the authority.
+- **REMARK 465 is free-text metadata decoupled from the coordinates**: usually right on a pristine wwPDB
+  deposition, but dropped or left stale by any tool that rewrites the file (relax, renumber, chain
+  extraction), and never updated downstream. Must never be trusted over geometry.
+- A C–N distance test has a huge safe margin (bond ≤ ~1.5 Å, gap ≥ ~2.5 Å), and two non-bonded backbone
+  atoms can't sit ~1.3 Å apart without clashing — so geometry can't false-pass a real break.
+
+**Motivating failure (see GOTCHAS).** A relaxed input with SEQRES stripped defeated `_assert_no_internal_gaps`
+(findMissingResidues → `{}`), so OpenMM bonded chain B 46→50 across a 10 Å gap; initial PE still looked
+normal (torn-bond penalty masked by solvent) and minimization silently corrupted the pose. The geometric
+guard catches it (`chain B 46->50 (C-N 10.0 A)`), SEQRES or not.
+
+**Scope / caveat.** Geometry decides *whether/where* a loop is missing; it cannot give the *identity or
+length* of the missing residues — that comes from the **design record** (designed constructs) or
+**UniProt cross-checked against the observed flanks** (native), never from SEQRES/REMARK on faith. The
+check also needs the backbone atoms to exist: a CA-only/coarse model would pass silently and would need a
+CA(i)–CA(i+1) fallback (~3.8 Å bonded) — out of scope, since a CA-only input fails `createSystem` anyway.
+
+---
+
+## 2026-10-22 — multistate per-replica equilibration default = 0 (off)
+
+**`MultiStateProductionConfig.equilibration_ns` default flipped 0.5 → 0.0** (REMD + REST2); the
+discarded per-replica equilibration (`sampler.equilibrate`, `remd/production.py` / `rest2/production.py`,
+gated on `equilibration_iterations > 0`) is now **off by default**, so production starts straight from
+the prepared pose (minimized + restrained-NVT + NPT-density-equilibrated, restraints released).
+
+**Why.** This tool measures **drift from the starting designed pose** (RMSD/RMSF vs the input; see
+objectives #1–3). `sampler.equilibrate` discards frames *in the simulation* — irreversibly throwing
+away the early relaxation away from the design, which is exactly the signal of interest, and
+contradicting the prepare/produce seam's own stated intent ("restraints release at start of production
+so the trajectory captures drift from the input pose"). A burn-in window is better chosen **in analysis**
+(one line, revisable) than baked in by dropping frames. The only thing equilibration buys is slightly
+cleaner early exchange-acceptance statistics, also recoverable by discarding early iterations post-hoc.
+The knob stays — set `equilibration_ns > 0` when you want that and don't care about the initial transient.
+
+**Also removed the duplicate `equilibration_ns` re-declaration in `REMDConfig`** — it restated the
+parent value and was why the default lived in two places; REMD now inherits it like REST2 already did.
+
+**Cross-engine note.** The sibling GROMACS engine (`RELE_simulations/gromacs_REMD`) defaults
+`EQUIL_NS=0.2` (shell fallback in `REMD-/REST2-gromacs.sbatch`), not 0 — it permits 0 but doesn't
+default to it. So the two engines now differ on this default (openmm 0.0 vs GROMACS 0.2); pin
+explicitly on both for a matched cross-engine comparison. (`HEAT_NS`/`nvt_equil_ns` still agree at 0.2.)
+
+---
+
 ## 2026-10-21 — default FF = ff19SB/OPC; OPC is HARD-required for ff19SB (not just recommended)
 
 **Default force field is now ff19SB + OPC** (`PrepConfig.protein_ff`/`water`), reversing the prior
@@ -362,9 +574,12 @@ outdir/
   production/
     trajectory.xtc
     production.log     # StateDataReporter: step,time,PE,KE,totalEnergy,T,V,density,speed
-    final_state.xml    # saveState (portable restart)
-    production.chk      # saveCheckpoint (exact restart; same hardware+openmm ONLY)
+    final_state.xml    # saveState (portable end state)
+    checkpoint_state.{A,B}.xml  # ping-pong portable resume checkpoints (see 2026-10-30 resume entry)
     run_report.json    # QC: timing, T/density/energy stats, stability flag
+    run_report.resume.<utc>.json  # per-resume-segment QC (does not overwrite run_report.json)
+  run_info.resume.<utc>.json      # per-resume-segment env provenance (outdir root)
+  resume_manifest.json            # {engine, production_config} — authoritative, for resume (outdir root)
 ```
 
 **Grounded in OpenMM docs (2026-10-01):**

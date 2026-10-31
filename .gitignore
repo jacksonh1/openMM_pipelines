@@ -4,7 +4,7 @@ examples/REMD_demo/demo_remd_out/
 examples/REST2_demo/demo_rest2_out/
 demo_short_run_*.out
 
-
+knowledgebase/papers/
 tools/
 .claude/settings.local.json
 .claude/worktrees/

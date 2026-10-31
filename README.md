@@ -145,9 +145,46 @@ launch several productions from it without re-running prepare:
 
 ```python
 from openmm_pipelines import EquilibratedSystem
-eq = EquilibratedSystem.from_disk(cfg.outdir)   # reload a prior prepare()
+eq = EquilibratedSystem.from_disk(cfg.outdir / "prepared")   # reload a prior prepare()
 md.run(eq, cfg)
 ```
+
+### Resuming or extending a run
+
+A production run that hit SLURM walltime (or crashed) can be **continued from its last
+checkpoint** instead of restarted — and a finished run can be **extended** to a longer target.
+One call, same for all three engines; it reads everything it needs from the run's `outdir`:
+
+```python
+from openmm_pipelines import resume
+
+resume("run1")                      # finish an interrupted run to its originally-planned length
+resume("run1", extend_to_ns=200.0)  # continue (or extend a finished run) to a new, larger target
+resume("run1", platform="CPU")      # optional: override the compute platform for this segment
+```
+
+`resume` never re-solvates or re-equilibrates (it reloads `prepared/`), and never re-runs work
+already done: MD appends to the existing `trajectory.xtc`; T-REMD/REST2 continue the same `.nc`.
+It **fails loud** if the run is already complete (pass `extend_to_ns` to extend) and if the
+`outdir` has no run to resume.
+
+For a **walltime-limited SLURM job, resubmit the same script** — have it continue if a run is
+already there, else start fresh (the library stays SLURM-agnostic; resubmission is yours to drive):
+
+```python
+from pathlib import Path
+from openmm_pipelines import prepare, md, resume
+
+if (Path(cfg.outdir) / "resume_manifest.json").exists():
+    resume(cfg.outdir)              # a prior (partial) run exists -> continue it
+else:
+    md.run(prepare(cfg), cfg)       # first submission -> fresh run
+```
+
+Note: the resume point is a **portable** OpenMM state, so a resumed trajectory is physically
+valid but not bit-identical to an uninterrupted one (the RNG stream is not carried across the
+restart — GPU runs are not bit-reproducible regardless). Each resumed segment writes its own
+`run_info.resume.<utc>.json` + `run_report.resume.<utc>.json`.
 
 **Key defaults** you inherit if you don't set them (full list + units in the config classes):
 `ph=7.4`, `box_shape=dodecahedron`, `padding_nm=1.0`, `ionic_strength_molar=0.15`,
@@ -217,11 +254,14 @@ CHARMM36/36M→(CHARMM) TIP3P.
 outdir/
   input.pdb                       # copy of the input pose (analysis reference)
   config.json, run_info.json      # pinned config + run metadata
+  resume_manifest.json            # engine + production config, so `resume(outdir)` can continue the run
   prepared/                       # the shared handoff: system.xml, state.xml, topology.cif, prep_report.json
   production/                     # plain MD: trajectory.xtc, final_state.xml, production.log, run_report.json
-  remd/ (or rest2/)               # <protocol>.nc, ladder.json, run_report.json
+                                  #   checkpoint_state.{A,B}.xml = ping-pong resume checkpoints
+  remd/ (or rest2/)               # <protocol>.nc (+ _checkpoint.nc), ladder.json, run_report.json
     analysis/                     # exchange_report.json, demuxed state00_ensemble.xtc, plots, report JSON
   analysis/                       # plain MD: processed trajectory, analysis_report.json, data npz, RMSD/Rg/RMSF/DSSP PNGs
+  run_info.resume.<utc>.json, production|remd|rest2/run_report.resume.<utc>.json   # per-resume-segment provenance + QC
 ```
 
 The `analysis/` folder holds the computed metrics, all measured against `input.pdb`:
@@ -255,6 +295,11 @@ python ./demo_short_run.py
 
 Submit from the demo folder: `cd examples/MD_demo && sbatch demo_short_run.sbatch`.
 
+**Walltime recovery:** make the job idempotent — continue if a run is already present, else start
+fresh — and resubmit the same script after a kill to continue from the last checkpoint (see
+`examples/MD_demo/resume_demo.py`'s `run_or_resume`). The library never talks to SLURM;
+resubmission (manual, or a `--requeue`/`scontrol requeue` wrapper) is yours to drive.
+
 ---
 
 ## Examples
@@ -262,6 +307,8 @@ Submit from the demo folder: `cd examples/MD_demo && sbatch demo_short_run.sbatc
 Worked, ps-scale end-to-end smoke runs (with committed outputs) live in `examples/`:
 
 - `examples/MD_demo/` — `prepare()` + `md.run()` + `analysis.analyze()`
+- `examples/MD_demo/resume_demo.py` — `md.run()` then `resume(..., extend_to_ns=)`; shows the
+  walltime `run_or_resume` resubmit idiom
 - `examples/REMD_demo/` — T-REMD + `analyze_remd()`
 - `examples/REST2_demo/` — REST2 + `analyze_rest2()`
 - `examples/input_structures/` — shared test structures

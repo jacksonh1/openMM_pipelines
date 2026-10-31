@@ -81,21 +81,29 @@ def plot_series(x, series, ylabel, path, title, xlabel="time (ps)"):
     return _save(fig, path)
 
 
-def plot_cluster_populations(populations, path, design_like_cluster=-1):
-    """Cluster sizes (rank-ordered, descending) with percent labels; highlight the
-    design-like cluster. One dominant bar near rank 0 = a stable, homogeneous ensemble."""
+def plot_cluster_populations(populations, path, design_like_cluster=-1, n_noise=0):
+    """Cluster sizes (rank-ordered, descending) with percent labels; highlight the design-like
+    cluster and show the DBSCAN/HDBSCAN noise bar last. Percentages are of all clustered frames
+    (incl. noise), matching the report JSON. One dominant bar near rank 0 = a stable ensemble."""
     pops = np.asarray(populations, dtype=float)
-    total = pops.sum()
+    total = pops.sum() + n_noise  # all clustered frames, incl. noise
+    xs = list(range(len(pops)))
+    heights = list(pops)
+    xticklabels = [str(r) for r in xs]
+    colors = ["tab:green" if r == design_like_cluster else "tab:blue" for r in xs]
+    if n_noise:  # DBSCAN/HDBSCAN diffuse tail — shown but not a conformation
+        xs.append(len(pops))
+        heights.append(float(n_noise))
+        xticklabels.append("noise")
+        colors.append("lightcoral")
     fig, ax = plt.subplots(figsize=(6, 3.5))
-    ranks = np.arange(len(pops))
-    colors = ["tab:green" if r == design_like_cluster else "tab:blue" for r in ranks]
-    bars = ax.bar(ranks, pops, color=colors)
-    for r, bar in enumerate(bars):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{100 * pops[r] / total:.0f}%", ha="center", va="bottom", fontsize=8)
+    ax.bar(xs, heights, color=colors)
+    for x, h in zip(xs, heights, strict=True):
+        ax.text(x, h, f"{100 * h / total:.0f}%", ha="center", va="bottom", fontsize=8)
     ax.set_xlabel("cluster (rank by population)")
     ax.set_ylabel("frames")
-    ax.set_xticks(ranks)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(xticklabels)
     ax.set_title("conformational cluster populations"
                  + (" (green = design-like)" if design_like_cluster >= 0 else ""))
     return _save(fig, path)

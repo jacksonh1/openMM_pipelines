@@ -13,7 +13,7 @@ scaling (√λ charges, λ·ε LJ, λ bonded + CMAP). Requires the optional ``[r
 
 from .config import REST2Config
 from .ladder import lambda_ladder
-from .production import run
+from .production import resume, run
 from .scaling import scale_solute
 
-__all__ = ["REST2Config", "lambda_ladder", "scale_solute", "run"]
+__all__ = ["REST2Config", "lambda_ladder", "scale_solute", "run", "resume"]

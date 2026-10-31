@@ -5,6 +5,159 @@ factual.
 
 ---
 
+## 2026-10-30 — resume / extend an interrupted production run (MD, REMD, REST2)
+
+- **Added `resume(outdir, *, extend_to_ns=None, platform=None)`** (top-level, `resume.py`) — continues
+  an interrupted (walltime/crash) run, or extends it to a larger target, via the **documented**
+  OpenMM / openmmtools restart mechanisms (not hand-rolled). Library-only: re-submitting the SLURM
+  job is the driver's job; the library reads disk state only (no SLURM coupling). Planned with the
+  architect agent (its correctness fixes folded in before coding).
+- **Engine dispatch via `resume_manifest.json`** at the outdir root (written by `run` at production
+  start; `lib/run_layout.py` `write_manifest`/`read_manifest`). Carries `{engine, production_config}`;
+  `resume` reconstructs the exact frozen config from it (NOT `config.json`, which is the prepare-time
+  `PrepConfig` → would inject silent engine defaults). Missing manifest / different-engine rerun ⇒
+  fail loud.
+- **MD (`md/production.py`)** — split `run`/`resume` over shared `_make_simulation`/`_add_reporters`.
+  Resume point is a **portable State XML written ping-pong to two files** (`_PingPongStateReporter`;
+  torn-write safe — OpenMM's `CheckpointReporter` overwrites one file in place). On resume: load the
+  newest valid State, set `sim.currentStep`, **truncate `trajectory.xtc` + `production.log` back to the
+  checkpoint step**, then `append=True`. Checkpoint cadence is now frame-based
+  (`checkpoint_every_n_frames=10` → `checkpoint_steps = n*traj_steps`, a frame multiple by
+  construction; fixes the latent `max(traj_steps*10, 5000)` misalignment). Dropped the binary
+  `production.chk` (replaced by the ping-pong State; exact `.chk` fast path deferred).
+- **REMD/REST2 (`multistate_resume.py` + each `production.py`)** — reopen the existing `.nc` via the
+  new `RunLayout.existing()` (never `offload`/`create`, which refuse existing files), then openmmtools
+  `ReplicaExchangeSampler.from_storage` + `run()` (finish) / `extend()` (extend). `continue_to` returns
+  the sampler so the caller keeps it alive through the QC report — **the sampler closes its reporter on
+  GC** (`__del__`), which otherwise makes `_run_report` read a closed `.nc` (`NetCDF: Not a valid ID`).
+- **Semantics**: `extend_to_ns` absolute (idempotent re-resume); already-complete + no extend ⇒ fail
+  loud (completion is a derived query, no sentinel file); per-segment `run_info.resume.<utc>.json` +
+  `run_report.resume.<utc>.json`.
+- **Tests** `tests/test_resume.py` (9): config round-trip (all engines), `existing()` + manifest
+  guards (fast); MD extend continuity (frame count == analytic, log↔xtc aligned, monotonic steps, no
+  dups), MD resume-to-planned via manifest, MD fail-loud guards, MD resume with `storage_directory`
+  (symlink resolution in truncate+append), REMD extend via `from_storage`, REMD resume-to-planned via
+  the `run()` branch (built a partial 5-of-10 `.nc`) (slow).
+- **Verified**: resume 9/9; full non-slow suite 125/125; `test_md.py`+`test_remd.py`+`test_rest2.py`
+  6+3 (fresh `run()` + analyze + storage offload unregressed). Docs: README (resume quickstart +
+  `run_or_resume` resubmit idiom + output layout; fixed a stale `from_disk(outdir)` → `/prepared`) and
+  `examples/MD_demo/resume_demo.{py,sbatch}`; DECISIONS (resume contract + output-contract update),
+  GOTCHAS (append/truncate ordering, `existing()`+`from_storage`, sampler-GC-closes-reporter), TODO,
+  CLAUDE.md index.
+- **Deferred** (noted in TODO): exact same-hardware `.chk` fast path (fingerprint-gated); a
+  `should_stop` hook + non-exception `is_complete(outdir)` if a self-requeuing SLURM driver is adopted.
+
+## 2026-10-29 — cation-π NBFIX correction for CHARMM36m (Liu et al. 2020)
+
+- **Added `cation_pi.py`** — pinned the paper's Table 1 protein subset as a typed table in the
+  paper's own units (6 pairs: Arg `NC2` and Lys `NH3`, each × aromatic `CA`/`CAI`/`CPT`) and a
+  tested conversion to OpenMM NBFixPair units (`sigma=rmin/2^(1/6)/10`, `eps=kcal·4.184`).
+  `render_nbfix_xml()` emits a `<LennardJonesForce lj14scale="1.0">` fragment.
+- **Not** a reimplementation of the paper — we consume its *output* (the NBFIX LJ values). The
+  paper's method is a pure lookup table; the scientific core is 6 rows.
+- **Verified the atom-class mapping** against OpenMM's shipped `charmm36_2024.xml` templates
+  (not assumed): Arg NE/NH1/NH2→`NC2`; Trp CD1/CZ3/CH2→`CA`, CE3/CZ2→`CAI`, CE2/CD2→`CPT`;
+  Phe/Tyr rings→`CA` (so both ride the `*-CA` rows); **Lys NZ→`NH3`** (so the paper's NH4+ rows
+  apply to Lys). Excluded: `CAB` (para-cresol toy atom type, never in proteins — supp Table S2
+  shows para-cresol C = `CA`), TMA⁺ `NG3P0`/`CG334` (CGenFF ligand/ncAA only), His (unparameterized).
+- **Wiring:** `PrepConfig.cation_pi_nbfix: bool = False`; `_check` refuses it unless
+  `protein_ff is CHARMM36M`. `build_system` appends the fragment (via `io.StringIO`) *after* the
+  base FF so the pairs merge into CHARMM's `CustomNonbondedForce`. One `ForceField` feeds both
+  `addSolvent` and `createSystem`; switchDistance already flows through (no extra work).
+- **REST2 guard:** `REST2Config._check_rest2` refuses `cation_pi_nbfix` at config time (the
+  correction is a CHARMM `CustomNonbondedForce`, unscalable by `scale_solute`; see DECISIONS/TODO).
+  REMD + MD are unaffected — T-REMD runs it today (no force scaling).
+- **Tests:** `test_cation_pi.py` (table/conversion/render + a real-ForceField check that the
+  fragment enlarges the NBFIX pair table) + guard tests in `test_config.py` / `test_rest2_config.py`.
+- **Open:** CGenFF twin (supp Table S1 — `NG2P1`/`NG3P0`/`CG334`/`CG2R61`/`CG2RC0`) for
+  non-natural/CGenFF-typed residues; a drop-in row append, deferred until an ncAA is in use.
+
+## 2026-10-30 — cation-π runtime-wiring validation (energy controls)
+
+- **Closed the end-to-end gap** the generator-table test could not see: that `createSystem`
+  actually applies the overridden LJ to real atoms. Added two `test_cation_pi.py` tests building
+  a structure in **vacuum + NoCutoff** with and without the fragment (base vs. with-fragment are
+  byte-identical except the overridden pairs, so ΔE isolates the override):
+  - **Positive control** (`1a22-fixed.pdb`, HGH — many real Arg/Lys↔aromatic contacts): energy
+    changes, bounded (`1 < |ΔE| < 1e4` kJ/mol), not noise, no blow-up. Measured **ΔE = −20.8
+    kJ/mol (attractive**, the physically expected direction — deeper cation-π well).
+  - **Negative control** (`helix_fusion.pdb`, poly-Ala — no cation, no aromatic): energy
+    **unchanged**, proving the override touches only cation↔aromatic pairs, never global LJ.
+- Un-minimized single-point absolute energies are ~1e11 kJ/mol (crystal-pose + added-H clashes);
+  irrelevant — they cancel in the difference. Full suite still green.
+- **Not done (user's call):** a full comparative production run (with/without correction on a real
+  Trp–Arg design) — that validates the *science* on a given protein, not the implementation; the
+  paper already validated the physics. Note the override is global-by-class, so such a run shifts
+  *every* cation↔aromatic contact, not only the one of interest.
+- **Comparative runs now being set up** (external to this repo, in `Ellen_WW_simulations/submit_jobs`):
+  WW34 WT + R448A on CHARMM36m, each with cation-π ON and OFF (4 jobs/seed), via the config-file
+  loader below. R448A removes the Arg (built-in control); ON-vs-OFF isolates the correction at
+  fixed FF.
+
+## 2026-10-30 — config-file loader for configs (to_json / from_json)
+
+- **Added `PrepConfig.to_json(path)` / `PrepConfig.from_json(path)`** (inherited by MD/REMD/REST2
+  configs). The pipeline had **no** way to reload a saved config: `prepare()` wrote `config.json`
+  (`model_dump(mode="json")`) but `model_validate_json` on it **failed** — `WaterModel`'s value is a
+  tuple `("tip3p", 3)`, which JSON stores as a list and pydantic cannot coerce back. So config.json
+  was write-only provenance; now it round-trips.
+- **Enums serialize by NAME** (`field_serializer` + `before` `field_validator` on `protein_ff` and
+  `water`): config.json now reads `"protein_ff": "CHARMM36M"`, `"water": "TIP3P"` (human-readable +
+  reloadable). The validators also accept the legacy value forms (xml string / `[name, n]` list), so
+  older config.json files still load. `from_json` re-runs full validation (bad FF pairing fails loud).
+- **Why:** setting up the WW-domain cation-π MD sweep, the clean way to specify per-run parameters
+  is a saved typed `MDConfig`, not env-var `--export` smuggling (the GROMACS idiom). The submitter
+  builds + validates + serializes one config per run; the driver does `MDConfig.from_json(path)`.
+- **Tests:** `test_config.py` — round-trip preserves config + enums-by-name; legacy value-form loads;
+  `from_json` revalidates (illegal combo raises). Nothing else reads config.json's enum fields
+  (`read_storage_directory` takes only `storage_directory`; `RunInfo` uses the cfg object), so the
+  format change is safe.
+
+## 2026-10-28 — clustering overhaul: DBSCAN default, adaptive min_samples, HDBSCAN option, no frame cap
+
+- **Diagnosed** the over-clustering report: an unbound-peptide run clustered into **444** states at
+  2.0 Å (`…/a83660d9…_openmm_md_unbound_300K_400ns_seed1/analysis/clustering/`). Root cause: the
+  default hierarchical distance-cut has no noise category, so a continuous ensemble fragments.
+- **Verified on that run (all 40k frames, min_samples=600=1.5%):** DBSCAN → **8 clusters**, 61% noise,
+  design-like frac 0.144; HDBSCAN → **3 clusters**, 13% noise, one dominant basin of 27511 frames
+  (69%), design-like frac 0.688. The DBSCAN/HDBSCAN gap is the varying-density case in the flesh —
+  HDBSCAN keeps the broad near-design basin that DBSCAN's tight 2 Å eps scatters into noise.
+- **`analysis/config.py`**: default `cluster_method` `hierarchical → dbscan`; added
+  `ClusterMethod.HDBSCAN`; `cluster_min_samples` now `int | None` (None = adaptive); replaced
+  `cluster_max_frames=2000` (silent auto-stride) with `cluster_stride=1` (explicit, all frames).
+- **`analysis/clustering.py`**: rewrote. Module constants `MIN_SAMPLES_FRAC=0.015`,
+  `MIN_SAMPLES_FLOOR=10` (re-derived from GROMACS `gromd-cluster`, not imported),
+  `MAX_HIERARCHICAL_FRAMES=10_000`. `_resolve_min_count` (adaptive density floor, used as DBSCAN
+  `min_samples` / HDBSCAN `min_cluster_size`), `_apply_stride`, `_hdbscan_labels` (copy=True so it
+  can't mutate `traj.xyz`). Hierarchical now fails loud above the frame cap. sklearn imported at top
+  (no longer lazy/optional).
+- **`analysis/plots.py`**: `plot_cluster_populations` gained a noise bar; percentages over all
+  clustered frames (incl. noise) to match the JSON.
+- **Deps**: scikit-learn moved from `[cluster]` extra to core (`>=1.3`) in `pyproject.toml` +
+  `environment.yml`; installed into `openmm_env` (1.9.1).
+- **Tests** (`tests/test_analysis.py`): replaced the 3 clustering tests with 6 — DBSCAN-default/all-
+  frames, adaptive-min_samples-sends-tail-to-noise, HDBSCAN splits blobs, hierarchical opt-in +
+  fails-loud-over-cap, explicit stride mapping. Added `_two_blob_traj` / `_blob_plus_outliers`
+  helpers. Full non-slow suite: **107 passed**.
+- Rationale + rejected alternatives (HDBSCAN-as-default, QT/Daura) in DECISIONS. Open item
+  (`design_like_fraction` vs sub-1.5% basins → noise) in TODO.
+
+## 2026-10-22 — per-replica equilibration default off (equilibration_ns 0.5 → 0.0)
+
+- **`MultiStateProductionConfig.equilibration_ns` default 0.5 → 0.0** (`config.py`), so the discarded
+  per-replica `sampler.equilibrate` is off by default for both REMD and REST2; production starts from
+  the prepared pose and the trajectory captures the full drift from the designed input (the analysis
+  signal). Burn-in is now an analysis-time choice, not baked in. Rationale in DECISIONS.md.
+- **Removed the duplicate `equilibration_ns = 0.5` in `REMDConfig`** (`remd/config.py`) — it restated
+  the parent default; REMD now inherits it like REST2 does.
+- Verified both engines resolve `equilibration_ns=0.0` / `equilibration_iterations=0`. Config tests
+  (`test_remd_config`, `test_rest2_config`, `test_config`) still pass (28) — they pin values explicitly
+  and test the derivation, not the default.
+- Indexed this repo with CodeGraph (`codegraph init`) at the user's request.
+- Noted: sibling GROMACS engine defaults `EQUIL_NS=0.2` (not 0) — the two now differ on this default.
+
+---
+
 ## 2026-10-21 — ff19SB/OPC is now the default; OPC hard-enforced for ff19SB
 
 - **Default FF flipped to ff19SB + OPC** (`config.py` `PrepConfig.protein_ff`/`water`); was

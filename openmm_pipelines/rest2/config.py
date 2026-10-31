@@ -29,6 +29,14 @@ class REST2Config(MultiStateProductionConfig):
 
     @model_validator(mode="after")
     def _check_rest2(self) -> "REST2Config":
+        # cation_pi_nbfix (inherited from PrepConfig) is CHARMM36m-only, and the correction
+        # lives in CHARMM's CustomNonbondedForce — whose REST2 solute-scaling is unimplemented
+        # (scale_solute refuses all CHARMM Custom forces; see rest2/scaling.py, TODO.md). Fail
+        # at config time with a cation-π-specific message rather than deep in production.
+        assert not self.cation_pi_nbfix, (
+            "REST2 cannot run a cation-π NBFIX system: the overrides are a CHARMM "
+            "CustomNonbondedForce that scale_solute does not yet scale. Use plain MD or T-REMD."
+        )
         if self.lambdas is not None:
             assert len(self.lambdas) >= 2, "need >= 2 lambdas"
             assert self.lambdas[0] == 1.0, (

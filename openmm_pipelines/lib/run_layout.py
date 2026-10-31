@@ -32,10 +32,45 @@ from pathlib import Path
 
 _MARKER = ".source_outdir"
 _HASH_LEN = 8
+_MANIFEST = "resume_manifest.json"
 
 
 def _abs(p) -> Path:
     return Path(p).expanduser().resolve()
+
+
+def write_manifest(outdir, manifest: dict) -> Path:
+    """Write the run's `resume_manifest.json` at the outdir ROOT (the authoritative record of
+    which engine/target/production-config produced this run, for `resume` to read back).
+
+    Written real in `outdir` at the START of production, before the long loop, so it survives a
+    walltime SIGKILL. Fails loud if the outdir already records a DIFFERENT engine — one outdir is
+    one run/engine (same invariant `offload` enforces for trajectories). A same-engine overwrite
+    is allowed (a rerun after `clean()`, or re-stamping an extended target).
+    """
+    path = Path(outdir) / _MANIFEST
+    if path.exists():
+        prior = json.loads(path.read_text())
+        if prior.get("engine") != manifest["engine"]:
+            raise RuntimeError(
+                f"{path} already records engine {prior.get('engine')!r}; refusing to overwrite "
+                f"with {manifest['engine']!r} (one outdir = one run/engine)."
+            )
+    Path(outdir).mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2, default=str))
+    return path
+
+
+def read_manifest(outdir) -> dict:
+    """Load the run's `resume_manifest.json`. Fails loud if absent — never infer the engine from
+    which stage subdir exists (several backends can consume one `prepared/`), so a run without a
+    manifest predates resume support and cannot be resumed."""
+    path = Path(outdir) / _MANIFEST
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no {_MANIFEST} in {outdir}; this run predates resume support (nothing to resume)."
+        )
+    return json.loads(path.read_text())
 
 
 def read_storage_directory(outdir) -> Path | None:
@@ -132,6 +167,32 @@ class RunLayout:
         out_path = self.outdir / relpath
         out_path.parent.mkdir(parents=True, exist_ok=True)
         return out_path
+
+    def existing(self, relpath: str) -> Path:
+        """Return the REAL path of an ALREADY-WRITTEN run file, for `resume` to reopen in place
+        without tripping `offload`'s overwrite guard and without `clean()`.
+
+        This is the one accessor that bypasses that guard, so it fails loud if the file is not
+        really there. Resolution order handles both storage modes AND the walltime-SIGKILL case
+        (which skips `finally: mirror()`, leaving recorded files real in `outdir`, not in storage):
+        an offloaded file is a symlink in `outdir` -> follow it; a recorded file is real in
+        `outdir` -> use it; otherwise fall back to the deterministic storage slot.
+        """
+        out_path = self.outdir / relpath
+        if out_path.is_symlink():  # offloaded (writer wrote directly onto storage)
+            target = Path(os.readlink(out_path))
+            if not target.exists():
+                raise FileNotFoundError(
+                    f"{out_path} symlinks to {target}, which does not exist; nothing to resume."
+                )
+            return target
+        if out_path.exists():  # recorded real file, or a no-storage run
+            return out_path
+        if self.storage_directory is not None:  # symlink gone but the real file may be in storage
+            target = self.storage_home / relpath
+            if target.exists():
+                return target
+        raise FileNotFoundError(f"{out_path} does not exist; nothing to resume from.")
 
     def mirror(self, subdir: str) -> None:
         """Copy every non-symlink file under `outdir/subdir` into `storage_home/subdir` so

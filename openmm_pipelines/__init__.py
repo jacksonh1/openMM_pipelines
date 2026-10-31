@@ -10,6 +10,7 @@ from .config import BoxShape, PrepConfig
 from .forcefield import ForceFieldError, NonbondedSpec, ProteinFF, WaterModel, resolve
 from .md.config import MDConfig
 from .preparation import EquilibratedSystem, prepare
+from .resume import resume
 
 __all__ = [
     "BoxShape",
@@ -22,6 +23,7 @@ __all__ = [
     "resolve",
     "prepare",
     "EquilibratedSystem",
+    "resume",
     "md",
     "analysis",
 ]

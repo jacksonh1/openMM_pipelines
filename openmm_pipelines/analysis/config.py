@@ -21,21 +21,25 @@ from pydantic import BaseModel, model_validator
 
 
 class ClusterMethod(str, Enum):
-    HIERARCHICAL = "hierarchical"  # scipy average-linkage on optimal pairwise Cα-RMSD
-    DBSCAN = "dbscan"  # sklearn density clustering on flattened superposed coords (optional)
+    DBSCAN = "dbscan"  # sklearn density clustering on flattened superposed coords; default
+    HDBSCAN = "hdbscan"  # sklearn hierarchical-density; handles varying-density basins (deep dive)
+    HIERARCHICAL = "hierarchical"  # scipy average-linkage on optimal pairwise Cα-RMSD; O(N^2), opt-in
 
 
 class AnalysisConfig(BaseModel, frozen=True):
     """Knobs for `analyze` / `analyze_remd` / `analyze_rest2`. All defaults system-agnostic."""
 
     # --- conformational clustering ---
-    cluster_method: ClusterMethod = ClusterMethod.HIERARCHICAL
-    cluster_cutoff_ang: float = 2.0  # Cα-RMSD cutoff: within this = the same conformation
+    cluster_method: ClusterMethod = ClusterMethod.DBSCAN
+    cluster_cutoff_ang: float = 2.0  # Cα-RMSD cutoff: within this = the same conformation (dbscan/hierarchical)
     cluster_selection: str = "name CA"
-    # Hierarchical builds an O(N^2) RMSD matrix; above this many frames it uniformly strides
-    # down to fit (the applied stride is recorded in the result, never silent).
-    cluster_max_frames: int = 2000
-    cluster_min_samples: int = 5  # DBSCAN only: min neighbours for a core point
+    # Cluster every Nth frame (1 = all frames). Default clusters the whole trajectory; it is
+    # the memory escape hatch for the O(N^2) hierarchical path (dbscan/hdbscan scale to all frames).
+    cluster_stride: int = 1
+    # DBSCAN min_samples / HDBSCAN min_cluster_size. None = adaptive: a state must hold at least
+    # ~1.5% of the clustered frames (floor 10), so the diffuse tail falls into noise instead of
+    # fragmenting. Pin an int for reproducibility. See clustering._resolve_min_count.
+    cluster_min_samples: int | None = None
 
     # --- interchain / multi-chain (auto-run when >=2 protein chains) ---
     interchain: bool = True
@@ -51,7 +55,9 @@ class AnalysisConfig(BaseModel, frozen=True):
     def _check(self) -> "AnalysisConfig":
         assert self.cluster_cutoff_ang > 0, "cluster_cutoff_ang must be > 0"
         assert self.contact_cutoff_nm > 0, "contact_cutoff_nm must be > 0"
-        assert self.cluster_max_frames >= 2, "cluster_max_frames must be >= 2 (need 2+ to cluster)"
-        assert self.cluster_min_samples >= 1, "cluster_min_samples must be >= 1"
+        assert self.cluster_stride >= 1, "cluster_stride must be >= 1"
+        assert (
+            self.cluster_min_samples is None or self.cluster_min_samples >= 1
+        ), "cluster_min_samples must be None (adaptive) or >= 1"
         assert self.reference_state >= 0, "reference_state must be >= 0"
         return self

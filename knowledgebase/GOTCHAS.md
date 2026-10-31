@@ -8,6 +8,33 @@ mistake twice.
 
 ---
 
+## A missing internal loop with no SEQRES defeats the gap guard and makes a 10 Å "peptide bond"
+
+**Trigger.** Preparing a structure that has an internal backbone break (unmodelled loop,
+e.g. a crystal structure with a disordered span) whose SEQRES / REMARK 465 header has been
+stripped — commonly a structure that was run through a relax/clean step first.
+
+**What goes wrong.** `_assert_no_internal_gaps` finds internal gaps from
+`PDBFixer.findMissingResidues()`, which compares **SEQRES** to the observed residues. With
+no SEQRES, `findMissingResidues()` returns `{}` — the guard sees nothing and passes. But the
+coordinates still have the break, and OpenMM's `createStandardBonds` bonds **consecutive
+residues in a chain by order, not distance**, so it forms a peptide bond across the gap (a
+real case: chain B residues 46→50, C–N = 10.0 Å vs a real bond's ~1.33 Å). The initial
+potential energy still looks normal (≈ −1.1×10⁶ kJ/mol for a solvated box — the ~tens of
+thousands of kJ/mol from the one torn bond is masked by the solvent), so nothing flags it;
+minimization then yanks the two residues together against the restraints and **silently
+corrupts the starting pose**.
+
+**Fix.** `_assert_no_backbone_breaks` (preparation/build.py) is the SEQRES-independent
+backstop: after `addMissingAtoms`, it measures the actual C(i)–N(i+1) distance between
+consecutive protein residues and fails loud above `_PEPTIDE_BOND_MAX_NM` (0.2 nm). ACE/NME
+caps are skipped on the side they lack a backbone atom; a non-protein residue resets the
+run. The real fix for the input is to **model the missing loop** (so there is no gap) rather
+than relying on either guard. Always model from the ORIGINAL file that still carries SEQRES
+and the observed coordinates, not from an already-relaxed/stripped copy.
+
+---
+
 ## storage_directory: raw files live on the storage filesystem; rerun = `clean()`, not `rm` the symlink
 
 **Trigger.** Running / re-running / analyzing a run that set `PrepConfig.storage_directory`.
@@ -312,3 +339,57 @@ reference): Na⁺/Cl⁻ are dual-confirmed; K/Rb/Cs/Li/F/I/Mg/Zn/Ca match GROMAC
 differing from the Amber leaprc. For neutralisation (Na⁺/Cl⁻ only) there is no ambiguity. If a design
 needs K⁺/Mg²⁺/etc., know you are getting the GROMACS/JC-Merz values, not the leaprc's legacy ones.
 Discovered 2026-10-21 while building the ion xml (`tools/convert_a99sbdisp/make_ions.py`).
+
+## MD resume: an appended trajectory silently desyncs from the log unless you truncate to the checkpoint
+
+**Trigger.** Resuming a plain-MD run by `loadState` + reporters with `append=True`, trusting that
+"append from where we stopped" is enough.
+
+**What goes wrong — three independent traps.**
+1. **Checkpoint off the frame boundary → duplicate/divergent frames.** If the resume checkpoint is
+   written at any cadence that is not a multiple of the trajectory-frame interval, the restored step
+   falls mid-frame; appending re-simulates a stretch the trajectory already covers, so frames
+   overlap with *different* coordinates (GPU dynamics diverge after a state reload — the RNG stream
+   is gone). Fix: write the checkpoint at a frame boundary — `MDConfig.checkpoint_steps =
+   checkpoint_every_n_frames * traj_steps`, a multiple **by construction** (not the old
+   `max(traj_steps*10, 5000)`, which could violate it when frames are dense).
+2. **Same-step reporter race.** At a step that is a boundary for both the checkpoint and the
+   trajectory, the two reporters fire in registration order. Register the **checkpoint reporter
+   BEFORE** the trajectory/log reporters: a crash between them then loses at most one not-yet-written
+   frame (a gap), never a duplicated/divergent one.
+3. **XTC↔log desync + Step rewind.** Even with (1)+(2), a crash between the same-step XTC write and
+   the StateDataReporter write leaves the two files one row apart *forever* after an append, and a
+   fresh `Simulation` after `loadState` has `currentStep=0`, so the appended log's `Step` column
+   restarts. Fix on resume: treat the checkpoint step as authoritative — **truncate both
+   `trajectory.xtc` (to `start_step // traj_steps` frames) and `production.log` (to rows with Step ≤
+   start_step) before appending**, and set `sim.currentStep = round(time/dt)`. The XTC truncate also
+   heals a torn final frame, so single-file `append=True` is safe (no segmented `part` files).
+
+The resume point itself is a **portable State XML** (`saveState`/`loadState`, works on any node;
+drops the RNG stream — fine, GPU runs aren't bit-reproducible), written **ping-pong to two alternating
+files** so a SIGKILL mid-write never destroys the prior good checkpoint; resume loads the newest of
+the two that deserializes. See `md/production.py` (`resume`, `_PingPongStateReporter`,
+`_truncate_xtc`/`_truncate_log`). Implemented + tested 2026-10-30 (`tests/test_resume.py`).
+
+## Multistate resume: reopen the .nc with `existing()` + `from_storage`, never `offload`/`create`
+
+**Trigger.** Resuming a REMD/REST2 run by pointing a new `MultiStateReporter` at the run's `.nc`.
+
+**What goes wrong.** `RunLayout.offload()` and `MultiStateSampler.create()` both refuse an existing
+file (the "cowardly refusing to overwrite" guards) — the fresh-run path cannot be reused for resume.
+**Fix.** Reopen the existing real `.nc` via the new `RunLayout.existing(relpath)` (resolves the
+storage symlink, and reads the real outdir file after a SIGKILL skipped `mirror()`), construct a
+`MultiStateReporter` on it (`open_mode=None` does **not** open/truncate in `__init__`), then
+`ReplicaExchangeSampler.from_storage(reporter)` and `run()` (finish to the stored target) or
+`extend(n_iterations=target−current)` (extend past it). openmmtools rebuilds the whole sampler
+(ladder, move, states) from the `.nc`, so resume needs no `eq`/re-scaling. Call
+`configure_global_platform` first (the global context-cache guard). See `multistate_resume.py`.
+
+**Sub-gotcha — the sampler closes its reporter on GC.** `MultiStateSampler.__del__` calls
+`self._reporter.close()`, so a sampler built in a helper and dropped before the QC report reads the
+reporter leaves a closed `.nc` → `RuntimeError: NetCDF: Not a valid ID` from
+`read_last_iteration`/`neighbor_acceptance`. `run()` never hits this (its sampler stays in scope
+through `_run_report`); the resume helper must **return the sampler and the caller must keep it
+referenced until the report is read** (then `del sampler`; `reporter.close()` is idempotent — it
+guards on `isopen()` — so the `finally` close is a safe no-op). Found 2026-10-30 building REMD/REST2
+resume.

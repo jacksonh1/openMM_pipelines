@@ -2,19 +2,24 @@
 
 No force introspection — all nonbonded settings flow through `createSystem` kwargs,
 so OpenMM applies them correctly whether the force field uses a `NonbondedForce`
-(AMBER) or a `CustomNonbondedForce` (CHARMM). Two fail-loud structure-prep guards run
-here: disulfide bonds must survive PDBFixer, and solvation must produce the water
-model's expected per-residue geometry.
+(AMBER) or a `CustomNonbondedForce` (CHARMM). Three fail-loud structure-prep guards run
+here: no backbone chain break between consecutive residues (a SEQRES-independent catch
+for a missing internal loop), disulfide bonds must survive PDBFixer, and solvation must
+produce the water model's expected per-residue geometry.
 """
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING
 
+import numpy as np
 from openmm import app, unit
 from pdbfixer import PDBFixer
 
+from ..cation_pi import render_nbfix_xml
 from ..forcefield import resolve
+from ..lib.selections import _PROTEIN_RESIDUES
 from .handoff import BuiltSystem
 
 if TYPE_CHECKING:
@@ -58,6 +63,49 @@ def _assert_no_internal_gaps(fixer) -> None:
         )
 
 
+_PEPTIDE_BOND_MAX_NM = 0.2  # a real C(i)-N(i+1) peptide bond is ~0.133 nm; a consecutive
+# protein pair farther apart than this is a backbone break, not a bond.
+
+
+def _assert_no_backbone_breaks(topology, positions, max_cn_nm: float = _PEPTIDE_BOND_MAX_NM) -> None:
+    """Fail loud if consecutive protein residues are too far apart to be peptide-bonded.
+
+    OpenMM bonds consecutive residues within a chain by their order, not their distance,
+    so a missing internal loop that carries no SEQRES record — nothing for
+    `_assert_no_internal_gaps` to see — yields a spurious long C(i)->N(i+1) bond that
+    silently corrupts the system (e.g. a relaxed structure whose SEQRES was stripped).
+    This is the SEQRES-independent backstop: it measures the actual C-N distance between
+    consecutive protein residues. ASSUMES backbone atoms are present — call after
+    `addMissingAtoms`. ACE/NME caps legitimately lack an N or C, so they are skipped on
+    the side they lack; a non-protein residue resets the run (a real chain boundary).
+    """
+    raw = positions.value_in_unit(unit.nanometer)
+    breaks = []
+    for chain in topology.chains():
+        prev = None  # (residue, index of backbone C) of the previous protein residue
+        for residue in chain.residues():
+            if residue.name not in _PROTEIN_RESIDUES:
+                prev = None
+                continue
+            backbone = {a.name: a.index for a in residue.atoms() if a.name in ("N", "C")}
+            if prev is not None and "N" in backbone:
+                prev_res, c_idx = prev
+                d = float(np.linalg.norm(np.array(raw[c_idx]) - np.array(raw[backbone["N"]])))
+                if d > max_cn_nm:
+                    breaks.append((chain.id, prev_res.id, residue.id, d))
+            prev = (residue, backbone["C"]) if "C" in backbone else None
+    if breaks:
+        detail = ", ".join(
+            f"chain {ch} {r0}->{r1} (C-N {d * 10:.1f} A)" for ch, r0, r1, d in breaks
+        )
+        raise PrepareError(
+            f"backbone chain break(s) between consecutive residues: {detail}. A peptide "
+            "bond is ~1.3 A, so a gap this large means missing residues that OpenMM would "
+            "bond across, silently corrupting the system. Model the missing loop before "
+            "preparing."
+        )
+
+
 def build_system(cfg: PrepConfig) -> BuiltSystem:
     fixer = PDBFixer(filename=str(cfg.pdb_in))
     ss_before = _count_disulfides(fixer.topology)  # capture the input pose's disulfides
@@ -77,8 +125,18 @@ def build_system(cfg: PrepConfig) -> BuiltSystem:
             f"{ss_after}. The input pose's CYS bonding was not preserved."
         )
 
+    # GUARD: no spatial backbone break between consecutive residues. SEQRES-independent,
+    # so it catches a missing internal loop that _assert_no_internal_gaps cannot see.
+    _assert_no_backbone_breaks(fixer.topology, fixer.positions)
+
     xmls, packing_model = resolve(cfg.protein_ff, cfg.water)  # FF xmls + packing box
-    ff = app.ForceField(*xmls)
+    ff_sources: list = list(xmls)
+    if cfg.cation_pi_nbfix:
+        # Cation-π NBFIX overrides merge into CHARMM36m's LennardJonesForce, so the fragment
+        # is loaded LAST. PrepConfig has already enforced protein_ff == CHARMM36M; render
+        # re-checks it (fail loud). One ForceField feeds both addSolvent and createSystem.
+        ff_sources.append(io.StringIO(render_nbfix_xml(cfg.protein_ff)))
+    ff = app.ForceField(*ff_sources)
     modeller = app.Modeller(fixer.topology, fixer.positions)
     modeller.addSolvent(
         ff,

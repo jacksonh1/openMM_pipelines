@@ -24,7 +24,7 @@ dependencies:
   # ── Scientific stack ────────────────────────────────────────────────
   - numpy
   - scipy
-  - scikit-learn        # optional DBSCAN clustering method (analysis)
+  - scikit-learn>=1.3   # default DBSCAN + HDBSCAN conformational clustering (analysis)
   - pandas
   - numba
   - netcdf4

@@ -13,6 +13,6 @@ Requires the optional ``[remd]`` extra (``openmmtools``).
 
 from .config import REMDConfig
 from .ladder import geometric_ladder
-from .production import run
+from .production import resume, run
 
-__all__ = ["REMDConfig", "geometric_ladder", "run"]
+__all__ = ["REMDConfig", "geometric_ladder", "run", "resume"]

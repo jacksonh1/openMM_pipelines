@@ -53,6 +53,44 @@ def _two_state_traj(n_res=6):
     return md.Trajectory(xyz, top)
 
 
+def _ca_topology(n_res=6):
+    top = md.Topology()
+    chain = top.add_chain()
+    for _ in range(n_res):
+        res = top.add_residue("ALA", chain)
+        top.add_atom("CA", md.element.carbon, res)
+    return top
+
+
+def _two_blob_traj(per=12, n_res=6, sep_nm=2.0, jitter_nm=0.02, seed=0):
+    """Two well-separated Gaussian blobs of `per` frames each — a real density signal for the
+    density methods (DBSCAN/HDBSCAN), unlike the exact-duplicate _two_state_traj."""
+    rng = np.random.default_rng(seed)
+    top = _ca_topology(n_res)
+    base = np.array([[r * 0.38, 0.0, 0.0] for r in range(n_res)], dtype=np.float32)
+    shape_b = base.copy()
+    shape_b[-2:, 1] += sep_nm  # 20 Å apart at sep_nm=2.0
+    frames = [
+        center + rng.normal(0, jitter_nm, center.shape).astype(np.float32)
+        for center in (base, shape_b)
+        for _ in range(per)
+    ]
+    return md.Trajectory(np.stack(frames).astype(np.float32), top)
+
+
+def _blob_plus_outliers(n_blob=50, n_out=3, n_res=6, jitter_nm=0.01, seed=1):
+    """One dense blob + `n_out` scattered singletons, each far from the blob and each other."""
+    rng = np.random.default_rng(seed)
+    top = _ca_topology(n_res)
+    base = np.array([[r * 0.38, 0.0, 0.0] for r in range(n_res)], dtype=np.float32)
+    frames = [base + rng.normal(0, jitter_nm, base.shape).astype(np.float32) for _ in range(n_blob)]
+    for k in range(n_out):
+        out = base.copy()
+        out[-1, 1] += 1.0 * (k + 1)  # last residue shifted 10/20/30 Å — isolated from everything
+        frames.append(out)
+    return md.Trajectory(np.stack(frames).astype(np.float32), top)
+
+
 def _two_chain_traj(sep_nm=2.0, box_nm=5.0, n_frames=4, n_res=3):
     """Two protein chains separated along x, in a cubic box (for min-image interchain tests)."""
     top = md.Topology()
@@ -93,34 +131,72 @@ def test_radius_of_gyration_shape_and_positive():
     assert np.all(rg > 0)
 
 
-def test_clustering_splits_two_states_and_tags_design_like():
-    traj = _two_state_traj()
-    cfg = AnalysisConfig(cluster_cutoff_ang=3.0)
-    res = cluster_conformations(traj, traj[0], cfg)  # reference = shape A
+def test_dbscan_is_default_clusters_all_frames_and_tags_design_like():
+    traj = _two_blob_traj(per=12)  # 24 frames, reference = blob A
+    res = cluster_conformations(
+        traj, traj[0], AnalysisConfig(cluster_cutoff_ang=3.0, cluster_min_samples=3))
+    assert res.method == "dbscan"              # DBSCAN is the new default
+    assert res.stride == 1
+    assert res.n_frames_clustered == traj.n_frames  # all frames, no cap
     assert res.n_clusters == 2
-    assert sorted(res.populations) == [3, 3]
+    assert sorted(res.populations) == [12, 12]
     assert res.labels.shape == (traj.n_frames,)
-    # the design-like cluster's representative is the shape-A basin (near the reference)
+    # the design-like cluster's representative is the blob-A basin (near the reference)
     assert res.representative_rmsd_to_design_ang[res.design_like_cluster] < 1.0
     assert res.design_like_fraction == pytest.approx(0.5)
 
 
-def test_clustering_auto_strides_and_maps_to_original_frames():
-    traj = _two_state_traj()  # 6 frames
-    res = cluster_conformations(traj, traj[0], AnalysisConfig(cluster_max_frames=3))
-    assert res.stride == 2
-    assert res.n_frames_clustered == 3
-    assert res.frame_indices.max() < traj.n_frames
+def test_adaptive_min_samples_sends_sparse_tail_to_noise():
+    # The over-fragmentation fix: a dense blob stays one cluster; the scattered tail -> noise,
+    # not singleton clusters. min_samples=None -> adaptive max(10, 1.5% of 53) = 10.
+    traj = _blob_plus_outliers(n_blob=50, n_out=3)
+    res = cluster_conformations(traj, traj[0], AnalysisConfig(cluster_cutoff_ang=2.0))
+    assert res.min_samples == 10
+    assert res.n_clusters == 1
+    assert int((res.labels == -1).sum()) == 3
 
 
-def test_dbscan_is_optional_but_works_when_available():
-    sklearn = pytest.importorskip("sklearn")  # noqa: F841 — optional extra
+def test_hdbscan_option_splits_two_blobs():
+    traj = _two_blob_traj(per=12)
+    res = cluster_conformations(
+        traj, traj[0],
+        AnalysisConfig(cluster_method=ClusterMethod.HDBSCAN, cluster_min_samples=5))
+    assert res.method == "hdbscan"
+    assert res.min_samples == 5  # reused as HDBSCAN min_cluster_size
+    assert res.n_clusters == 2
+
+
+def test_hierarchical_is_opt_in_and_splits_two_states():
     traj = _two_state_traj()
     res = cluster_conformations(
-        traj, traj[0], AnalysisConfig(cluster_method=ClusterMethod.DBSCAN,
-                                      cluster_cutoff_ang=3.0, cluster_min_samples=2))
-    assert res.method == "dbscan"
+        traj, traj[0],
+        AnalysisConfig(cluster_method=ClusterMethod.HIERARCHICAL, cluster_cutoff_ang=3.0))
+    assert res.method == "hierarchical"
     assert res.n_clusters == 2
+    assert sorted(res.populations) == [3, 3]
+    assert res.design_like_fraction == pytest.approx(0.5)
+    assert res.representative_rmsd_to_design_ang[res.design_like_cluster] < 1.0
+
+
+def test_hierarchical_too_many_frames_fails_loudly():
+    from openmm_pipelines.analysis.clustering import MAX_HIERARCHICAL_FRAMES
+    top = _ca_topology(n_res=1)
+    n = MAX_HIERARCHICAL_FRAMES + 1
+    traj = md.Trajectory(np.zeros((n, 1, 3), dtype=np.float32), top)
+    with pytest.raises(ValueError, match="cluster_stride|dbscan"):
+        cluster_conformations(
+            traj, traj[0], AnalysisConfig(cluster_method=ClusterMethod.HIERARCHICAL))
+
+
+def test_explicit_stride_maps_to_original_frames():
+    traj = _two_state_traj()  # 6 frames
+    res = cluster_conformations(
+        traj, traj[0],
+        AnalysisConfig(cluster_method=ClusterMethod.HIERARCHICAL,
+                       cluster_cutoff_ang=3.0, cluster_stride=2))
+    assert res.stride == 2
+    assert res.n_frames_clustered == 3
+    assert res.frame_indices.tolist() == [0, 2, 4]
 
 
 def test_interchain_metrics_on_a_two_chain_system(tmp_path):

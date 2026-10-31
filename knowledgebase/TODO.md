@@ -43,6 +43,17 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [ ] `storage status`/gc helper — list orphaned storage folders (marker points to a gone/relinked outdir). Marker enables it; not yet built.
 - [ ] Optional: content/config hash recorded for dedup (run identity stays outdir; layout unchanged).
 
+## Force-field corrections
+
+- [x] **Cation-π NBFIX (Liu et al. 2020)** — `cation_pi.py` + `PrepConfig.cation_pi_nbfix` (opt-in,
+  CHARMM36m-only); Arg `NC2` + Lys `NH3` × aromatic `CA`/`CAI`/`CPT`; merged in `build_system`;
+  REST2 refuses it. (2026-10-29) Runtime wiring validated by vacuum-energy ΔE controls
+  (positive 1a22 = −20.8 kJ/mol attractive; negative poly-Ala = unchanged). (2026-10-30)
+- [ ] **Cation-π CGenFF twin (supp Table S1)** for non-natural / CGenFF-typed residues
+  (`NG2P1`/`NG3P0`/`CG334` × `CG2R61`/`CG2RC0`, incl. TMA⁺ for trimethyl-Lys/choline). Drop-in row
+  append to `_CATION_PI_NBFIX`; deferred until an ncAA is actually in use. Note the paper leaves
+  mixed natural-cation × CGenFF-aromatic pairs and partially-methylated Lys untabulated.
+
 ## Science-review items to resolve before trusting production
 
 - [ ] Restraint `x0` (absolute) vs MC barostat COM rescaling — confirm benign.
@@ -57,6 +68,7 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 
 ## Open design decisions
 
+- [ ] **Independent replicates & seeding** — `seed` drives reproducible replicates for plain MD only; it is **inert in REMD/REST2 production** (openmmtools RNG unseeded), and there is no replicate-management layer. No decision yet — see `replicates_and_seeding.md` (findings + best-practice standard + open questions).
 - [~] **Output contract** — layout stable (prepare / production / remd|rest2 / analysis subdirs); run identity = **outdir** (path-based, decided 2026-10-21, not content-addressed); `storage_directory` offload/mirror added via `RunLayout`. Exact file naming/formats still open for a dedicated pass.
 - [x] REMD production ensemble default: **NVT** (decided 2026-10-06; see DECISIONS).
 - [x] REMD/REST2 backend home: per-engine folders; `[remd]` extra gates the openmmtools import and `remd/`+`analysis/remd.py` are not eagerly imported. (2026-10-06)
@@ -74,3 +86,11 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [ ] REST2: 1-4 (scaled exception) handling under charge/ε scaling is done via combining rules — cross-check against a per-force-group energy decomposition on a real system (open item from the kickoff note).
 - [ ] REMD/REST2: expose demux of **all** rungs (not just the reference state) if multi-state ensembles are wanted; currently `demux_state(k)` per call, `analyze_*` does the reference rung. (shared `analysis/multistate.py`)
 - [ ] REMD: per-neighbour-acceptance-driven ladder auto-tuning (iterate `n_replicas` from diagnostics) — currently manual.
+- [x] **Resume / extend** — `resume(outdir, extend_to_ns=...)` continues (or extends) an interrupted run via the documented OpenMM/openmmtools restart mechanisms. MD: ping-pong portable State + truncate-to-checkpoint + `append=True`. REMD/REST2: openmmtools `from_storage` + `run`/`extend`. Manifest-driven engine dispatch; library-only (no SLURM coupling). (2026-10-30; DECISIONS/GOTCHAS; `tests/test_resume.py`)
+- [ ] Resume: exact same-hardware binary `.chk` fast path, gated by an environment fingerprint — portable State is the default + sufficient; this only saves the RNG-stream divergence on a same-node restart. Deferred 2026-10-30.
+- [ ] Resume: a `should_stop` hook on the run loops + a non-exception `is_complete(outdir)` — only if a self-requeuing SLURM driver is adopted (MD's monolithic `sim.step` would need chunking; REMD/REST2 are already iteration-chunked). Deferred 2026-10-30.
+
+## Analysis — clustering
+
+- [x] Clustering over-fragmentation fix — DBSCAN default + adaptive `min_samples`, HDBSCAN opt-in, explicit `cluster_stride` (no silent 2000-frame cap), hierarchical fails loud over `MAX_HIERARCHICAL_FRAMES`, sklearn → core dep. (2026-10-28; DECISIONS)
+- [ ] `design_like_fraction` is read off cluster populations, so a genuine design-like basin holding <1.5% of frames collapses into DBSCAN noise and under-reports retention. Consider computing retention directly as the fraction of frames within `cluster_cutoff_ang` RMSD of the design pose, independent of clustering.

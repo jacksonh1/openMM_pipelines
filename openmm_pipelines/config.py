@@ -12,9 +12,10 @@ import warnings
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_serializer, field_validator, model_validator
 
-from .forcefield import ProteinFF, WaterModel, _RECOMMENDED_WATER, resolve
+from .cation_pi import COMPATIBLE_FF as _CATION_PI_FF
+from .forcefield import ForceFieldError, ProteinFF, WaterModel, _RECOMMENDED_WATER, resolve
 
 
 class BoxShape(str, Enum):
@@ -43,6 +44,12 @@ class PrepConfig(BaseModel, frozen=True):
     ionic_strength_molar: float = 0.15  # NaCl added beyond charge neutralization
     neutralize: bool = True
 
+    # --- optional force-field corrections ---
+    # Cation-π NBFIX (Liu et al. 2020): pair-specific LJ overrides that deepen Arg/Lys ↔
+    # aromatic contacts. GLOBAL by atom class (not one residue pair) and CHARMM36m-only — the
+    # _check guard below enforces the FF, REST2Config refuses it. See cation_pi.py.
+    cation_pi_nbfix: bool = False
+
     # --- dynamics ---
     temperature_k: float = 300.0  # reference/equilibration temperature (= T_min for REMD)
     dt_ps: float = 0.004  # 4 fs -> requires HMR (default on; see below)
@@ -64,6 +71,35 @@ class PrepConfig(BaseModel, frozen=True):
     platform: str = "CUDA"
     seed: int | None = None  # None = fresh RNG per run; int pins setup + RNG streams
 
+    # --- (de)serialization ---
+    # Enums round-trip by NAME so a written config is both human-readable and reloadable:
+    # WaterModel's value is a tuple ("tip3p", 3), which JSON stores as a list and pydantic
+    # cannot coerce back to the enum. The `before` validators also accept the legacy value
+    # form (an enum value / tuple), so older config.json files still load.
+    @field_validator("protein_ff", mode="before")
+    @classmethod
+    def _coerce_protein_ff(cls, v):
+        if isinstance(v, str):
+            return ProteinFF[v] if v in ProteinFF.__members__ else ProteinFF(v)
+        return v
+
+    @field_validator("water", mode="before")
+    @classmethod
+    def _coerce_water(cls, v):
+        if isinstance(v, str):
+            return WaterModel[v]
+        if isinstance(v, (list, tuple)):
+            return WaterModel(tuple(v))
+        return v
+
+    @field_serializer("protein_ff")
+    def _ser_protein_ff(self, v: ProteinFF) -> str:
+        return v.name
+
+    @field_serializer("water")
+    def _ser_water(self, v: WaterModel) -> str:
+        return v.name
+
     @model_validator(mode="after")
     def _check(self) -> PrepConfig:
         assert self.pdb_in.exists(), f"pdb_in not found: {self.pdb_in}"
@@ -73,6 +109,12 @@ class PrepConfig(BaseModel, frozen=True):
         )
         assert self.density_min_seg >= 2, "density plateau fit needs density_min_seg >= 2"
         resolve(self.protein_ff, self.water)  # raises ForceFieldError on illegal pairing
+        if self.cation_pi_nbfix and self.protein_ff is not _CATION_PI_FF:
+            raise ForceFieldError(
+                f"cation_pi_nbfix requires {_CATION_PI_FF.name}: the overrides are CHARMM36m "
+                f"atom-class LJ parameters (Liu et al. 2020) with no equivalent under "
+                f"{self.protein_ff.name}."
+            )
         if self.water is not _RECOMMENDED_WATER[self.protein_ff]:
             warnings.warn(
                 f"{self.protein_ff.name} is recommended with "
@@ -93,6 +135,21 @@ class PrepConfig(BaseModel, frozen=True):
     def nvt_equil_steps(self) -> int:
         return round(self.nvt_equil_ns * 1000 / self.dt_ps)
 
+    # --- config files ---
+    def to_json(self, path) -> Path:
+        """Write this config to a JSON file (reload with `from_json`). Same schema as the
+        `config.json` prepare() emits, so either can seed a run."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.model_dump_json(indent=2))
+        return path
+
+    @classmethod
+    def from_json(cls, path) -> "PrepConfig":
+        """Load a config of THIS class from a JSON file (validated on load, like construction).
+        `MDConfig.from_json(p)` yields an `MDConfig`; a bad field or FF pairing fails loud here."""
+        return cls.model_validate_json(Path(path).read_text())
+
 
 class MultiStateProductionConfig(PrepConfig):
     """Shared production fields for the openmmtools multistate backends (REMD / REST2).
@@ -106,7 +163,13 @@ class MultiStateProductionConfig(PrepConfig):
     # --- production (per replica) ---
     total_ns: float = 20.0  # MD time collected per replica
     exchange_attempt_ps: float = 1.0  # MD time per iteration (between exchange attempts)
-    equilibration_ns: float = 0.5  # per-replica equilibration, discarded
+    # Per-replica equilibration at each replica's own state (T for REMD, λ for REST2), run
+    # inside the sampler and DISCARDED. Default 0.0 = off: production starts straight from the
+    # prepared pose so the trajectory captures the full relaxation/drift away from the input
+    # structure (the signal for stability/drift characterization). Choose a burn-in window in
+    # analysis instead of throwing frames away here. Set > 0 only when you want cleaner early
+    # exchange-acceptance statistics and don't care about the initial transient.
+    equilibration_ns: float = 0.0
 
     # --- replica exchange ---
     replica_mixing_scheme: str = "swap-all"  # openmmtools: 'swap-all' | 'swap-neighbors'

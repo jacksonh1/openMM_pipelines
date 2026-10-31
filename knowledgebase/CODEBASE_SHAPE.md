@@ -57,6 +57,9 @@ openmm_pipelines/
   config.py                # PrepConfig (base; + storage_directory), MultiStateProductionConfig, BoxShape [BUILT]
   forcefield.py            # ProteinFF, WaterModel, NonbondedSpec, resolve(),
                            #   ForceFieldError, registries                      [BUILT]
+  cation_pi.py             # cation-π NBFIX table (Liu 2020, Table 1 protein subset) +
+                           #   render_nbfix_xml(); opt-in via PrepConfig.cation_pi_nbfix,
+                           #   CHARMM36m-only, merged in build_system            [BUILT]
   exchange.py              # neighbor_acceptance(reporter): shared multistate mixing primitive [BUILT]
   context_cache.py         # configure_global_platform: re-entrant openmmtools cache setup     [BUILT]
 
@@ -100,8 +103,8 @@ openmm_pipelines/
     trajectory.py          #   load (cif topo via openmm) + image_molecules + strip + superpose to input
     metrics.py             #   rmsd_to_reference / radius_of_gyration / rmsf_per_residue (Å)
     dssp.py                #   secondary_structure, ss_fractions, dssp_timeline (per-residue SS map)
-    clustering.py          #   ClusterResult; cluster_conformations (hierarchical default + optional
-                           #     DBSCAN [cluster] extra); representatives + populations + design-anchored
+    clustering.py          #   ClusterResult; cluster_conformations (DBSCAN default + HDBSCAN + hierarchical;
+                           #     adaptive min_samples, cluster_stride); representatives + populations + design-anchored
     interchain.py          #   min-image interchain min-dist/contacts/COM + per-chain RMSD; auto at >=2 chains
     plots.py               #   rmsd / rg / rmsf / dssp / dssp_timeline / cluster / interchain PNGs (matplotlib Agg)
     report.py              #   write_html_report: self-contained interactive Plotly report.html ([report] extra)
@@ -175,9 +178,9 @@ Core OpenMM bundles every protein force field needed — **no `openmmforcefields
 dependency** (verified against OpenMM 8.6.1 in `openmm_env`). `mdtraj` is the single
 trajectory library (no MDAnalysis). `openmmtools` is required only for the future
 REMD/REST2 backends — an **optional `[remd]` extra**, not a core dep of plain MD.
-`scikit-learn` is required only for the optional DBSCAN clustering method — an
-**optional `[cluster]` extra** (lazy-imported); the default hierarchical clustering uses
-only `scipy`. `plotly` is required only for the interactive HTML report
+`scikit-learn` (`>=1.3`) is a **core dependency**: the default clustering is DBSCAN and
+HDBSCAN is an opt-in method (both `sklearn.cluster`); only the opt-in hierarchical method
+is `scipy`-only. `plotly` is required only for the interactive HTML report
 (`analysis/report.py`) — an **optional `[report]` extra** (lazy-imported). `storage_directory`
 file placement (`lib/run_layout.RunLayout`) is pure stdlib (no extra dep).
 

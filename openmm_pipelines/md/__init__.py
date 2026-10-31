@@ -5,6 +5,6 @@ trajectory. One-shot: ``md.run(prepare(cfg), cfg)``.
 """
 
 from .config import MDConfig
-from .production import run
+from .production import resume, run
 
-__all__ = ["MDConfig", "run"]
+__all__ = ["MDConfig", "run", "resume"]

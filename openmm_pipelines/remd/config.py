@@ -23,8 +23,8 @@ class REMDConfig(MultiStateProductionConfig):
     n_replicas: int = 12
     temperatures_k: tuple[float, ...] | None = None  # explicit ladder overrides min/max/n
 
-    # Per-replica equilibration default (at each rung's own temperature, discarded).
-    equilibration_ns: float = 0.5
+    # (equilibration_ns — per-replica equilibration, discarded — is inherited from
+    #  MultiStateProductionConfig; default 0.0 = off. See its definition.)
 
     @model_validator(mode="after")
     def _check_remd(self) -> "REMDConfig":

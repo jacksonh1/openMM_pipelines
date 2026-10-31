@@ -19,6 +19,7 @@ Requires the optional ``[remd]`` extra (openmmtools).
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,10 +31,11 @@ from openmmtools.multistate import MultiStateReporter, ReplicaExchangeSampler
 
 from ..context_cache import configure_global_platform
 from ..exchange import neighbor_acceptance
-from ..lib.run_layout import RunLayout
+from ..lib.run_layout import RunLayout, write_manifest
 from ..lib.selections import protein_atoms
 from ..lib.system_edits import strip_barostats
-from ..reports import REST2RunReport, write_json
+from ..multistate_resume import continue_to, open_existing_reporter, utc_stamp
+from ..reports import REST2RunReport, RunInfo, write_json
 from .ladder import lambda_ladder
 from .scaling import scale_solute
 
@@ -56,10 +58,15 @@ def _ladder(cfg) -> tuple[list[float], list[float]]:
     return lambda_ladder(cfg.temperature_k, cfg.max_effective_temperature_k, cfg.n_replicas)
 
 
+def _manifest(cfg) -> dict:
+    return {"engine": "rest2", "production_config": cfg.model_dump(mode="json")}
+
+
 def run(eq: EquilibratedSystem, cfg: REST2Config) -> Path:
     layout = RunLayout(cfg.outdir, cfg.storage_directory)
     outdir = cfg.outdir / "rest2"
     outdir.mkdir(parents=True, exist_ok=True)
+    write_manifest(cfg.outdir, _manifest(cfg))  # authoritative engine/target record, for resume
 
     configure_global_platform(cfg.platform)
 
@@ -127,6 +134,39 @@ def run(eq: EquilibratedSystem, cfg: REST2Config) -> Path:
         # "cowardly refuses to overwrite" the orphaned file on rerun (GOTCHAS.md).
         reporter.close()
         layout.mirror("rest2")  # copy the small files into storage (storage = full record)
+    return outdir
+
+
+def resume(cfg: REST2Config) -> Path:
+    """Continue (or extend to a larger total_ns) an interrupted REST2 run from cfg.outdir.
+
+    openmmtools rebuilds the sampler (pre-scaled systems, move, states) from the existing `.nc`, so
+    no `eq`/re-scaling is needed; the ladder (λ, effective temps, solute size) for the QC report is
+    reread from the run's own `rest2/ladder.json`, and we continue to `cfg.n_iterations`.
+    """
+    layout = RunLayout(cfg.outdir, cfg.storage_directory)
+    outdir = cfg.outdir / "rest2"
+    write_manifest(cfg.outdir, _manifest(cfg))  # restamp the (possibly extended) target
+    configure_global_platform(cfg.platform)
+
+    ladder = json.loads(layout.existing("rest2/ladder.json").read_text())
+
+    reporter = open_existing_reporter(layout, "rest2", _NC, cfg.checkpoint_interval_iterations)
+    try:
+        sampler, wall_seconds = continue_to(reporter, cfg.n_iterations, cfg.total_ns)
+        ts = utc_stamp()
+        write_json(RunInfo.collect(cfg), layout.record(f"run_info.resume.{ts}.json"))
+        write_json(
+            _run_report(
+                reporter, cfg, ladder["lambdas"], ladder["effective_temperatures_k"],
+                ladder["n_solute_atoms"], wall_seconds,
+            ),
+            layout.record(f"rest2/run_report.resume.{ts}.json"),
+        )
+        del sampler  # keep alive until the report is read (reporter closes with the sampler)
+    finally:
+        reporter.close()
+        layout.mirror("rest2")
     return outdir
 
 
