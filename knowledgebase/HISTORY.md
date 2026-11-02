@@ -5,6 +5,29 @@ factual.
 
 ---
 
+## 2026-11-02 — analysis: Q / dRMSD / lDDT fold-retention metrics + 300 dpi figures
+
+- **Three alignment-free fold-retention metrics vs the design**, added to `analysis/metrics.py` and
+  plotted in `drift_report` (so both plain MD and demuxed REMD/REST2 get them): native-contact
+  fraction **Q** (Best–Hummer–Eaton: all-heavy soft cutoff, β=50/nm, λ=1.8, |i−j|≥4, 4.5 Å),
+  **dRMSD** (Cα distance-RMSD), and **lDDT** (`biotite.structure.lddt`, one curve per `LddtAtomSet`
+  in `config.lddt_atom_sets`, default `(ca_cb, ca)`; whole-system, R0=15 Å, bins 0.5/1/2/4 Å). New
+  PNGs `q.png`, `drmsd.png`, `lddt_<set>.png` + per-residue `lddt_<set>_per_residue.png`; npz keys,
+  report-JSON blocks, and HTML-report sections.
+- **`load_prepared_reference`** (protein slice of `prepared/topology.cif`) added to `trajectory.py`:
+  the design pose carrying the trajectory's exact atom layout, which per-atom Q/lDDT need. RMSD stays
+  on raw `input.pdb` (unchanged). `drift_report` gained `native_reference` + `config` params; both
+  callers (`analyze`, `analyze_multistate`) updated.
+- **300 dpi**: `plots._save` now `dpi=300` (was 150) — every figure. `plot_rmsf` refactored onto a
+  generic `plot_per_residue`; `plot_timeseries`/`plot_per_residue` gained optional `ylim`.
+- **Dependency added — biotite** (`>=1.0`, resolved 2.0.0): lDDT only (mdtraj has none). In
+  `pyproject.toml` + `environment.yml`; installed into `openmm_env`.
+- Verified on `demo_out`: Q 0.997, dRMSD 2.1 Å, lDDT Cα+Cβ 0.89 / Cα 0.91; `q.png` 1800×1050 @ 300 dpi.
+  5 new metric tests (identity, breakage, per-residue localization, fail-loud on layout mismatch);
+  full suite 132 passed. FragForge `DECISIONS.md` md_quant note corrected (MDTraj = trajectory engine;
+  biotite fine, not "mdtraj-only").
+- **Open:** reference kept split (input.pdb → RMSD; prepared → Q/dRMSD/lDDT); unify-on-prepared not done.
+
 ## 2026-10-31 — prep: never build missing residues (silent terminal-extension bug)
 
 - **Found via the Ellen WW-domain MD runs:** PDBFixer was building 21 **terminal** residues into an

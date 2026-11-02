@@ -23,7 +23,7 @@ from .clustering import (
     pairwise_rmsd,
     write_representative_pdbs,
 )
-from .config import AnalysisConfig, ClusterMethod
+from .config import AnalysisConfig, ClusterMethod, LddtAtomSet
 from .drift import drift_report
 from .dssp import secondary_structure, ss_fractions
 from .interchain import interchain_report, protein_chain_ids
@@ -42,6 +42,7 @@ __all__ = [
     "analyze",
     "AnalysisConfig",
     "ClusterMethod",
+    "LddtAtomSet",
     "ClusterResult",
     "load_system_trajectory",
     "export_processed_trajectory",

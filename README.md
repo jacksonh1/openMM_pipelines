@@ -86,7 +86,7 @@ cfg = MDConfig(
 
 eq = prepare(cfg)               # build + solvate + minimize + equilibrate (shared by all engines)
 md.run(eq, cfg)                 # production
-analysis.analyze(cfg.outdir)    # RMSD/Rg/RMSF/DSSP + clustering vs the input pose
+analysis.analyze(cfg.outdir)    # RMSD/Rg/RMSF/DSSP + Q/dRMSD/lDDT + clustering vs the design pose
 ```
 
 One-shot: `md.run(prepare(cfg), cfg)`. `prepare()` also serializes the equilibrated system
@@ -260,14 +260,16 @@ outdir/
                                   #   checkpoint_state.{A,B}.xml = ping-pong resume checkpoints
   remd/ (or rest2/)               # <protocol>.nc (+ _checkpoint.nc), ladder.json, run_report.json
     analysis/                     # exchange_report.json, demuxed state00_ensemble.xtc, plots, report JSON
-  analysis/                       # plain MD: processed trajectory, analysis_report.json, data npz, RMSD/Rg/RMSF/DSSP PNGs
+  analysis/                       # plain MD: processed trajectory, analysis_report.json, data npz,
+                                  #   RMSD/Rg/RMSF/DSSP + Q/dRMSD/lDDT PNGs (300 dpi) + report.html
   run_info.resume.<utc>.json, production|remd|rest2/run_report.resume.<utc>.json   # per-resume-segment provenance + QC
 ```
 
-The `analysis/` folder holds the computed metrics, all measured against `input.pdb`:
-`analysis_report.json` (RMSD drift from the input pose, radius of gyration, per-residue RMSF,
-secondary-structure fractions, conformational-cluster count), the matching PNG plots vs time,
-and `analysis_data.npz` with the raw arrays.
+The `analysis/` folder holds the computed metrics, all measured against the design pose:
+`analysis_report.json` (RMSD drift, radius of gyration, per-residue RMSF, secondary-structure
+fractions, native-contact fraction Q, distance-RMSD, lDDT, conformational-cluster count), the
+matching 300 dpi PNG plots, `analysis_data.npz` with the raw arrays, and an interactive
+`report.html`. See **Analysis** below for the knobs; `analyze` also runs it automatically.
 
 ### REMD/REST2 demultiplexing
 
@@ -276,8 +278,52 @@ move *through* state space as swaps reassign their thermodynamic state. The `.nc
 are **not** fixed-temperature ensembles. To get a constant-T (REMD) or fixed-λ (REST2)
 ensemble you **demux**: per iteration, pick the walker occupying the target slot. Only slot 0
 (T_min for REMD, λ=1 for REST2) is a real Boltzmann sample at the reference condition — the
-only one that feeds RMSD/Rg/RMSF/clustering. `analyze_remd` / `analyze_rest2` do this for you
-(see `analysis/multistate.py`, `demux_state`).
+only one that feeds the drift metrics / clustering. `analyze_remd` / `analyze_rest2` do this for
+you (see `analysis/multistate.py`, `demux_state`).
+
+---
+
+## Analysis
+
+`analyze(outdir)` (plain MD) / `analyze_remd(outdir)` / `analyze_rest2(outdir)` write
+`outdir/analysis/`: metric PNGs (300 dpi), `analysis_report.json`, `analysis_data.npz`, and an
+interactive `report.html`. All metrics are measured against the **design pose**.
+
+Pass an `AnalysisConfig` to pin every parameter — it is serialized into the report, so a run is
+reproducible from its own JSON (don't rely on defaults in a campaign):
+
+```python
+from openmm_pipelines.analysis import analyze, AnalysisConfig, ClusterMethod, LddtAtomSet
+
+analyze(cfg.outdir, AnalysisConfig(
+    # fold-retention vs the design (all alignment-free):
+    q_native_cutoff_ang=4.5, q_min_seq_sep=4, q_beta_per_nm=50.0, q_lambda=1.8,  # native-contact Q (BHE)
+    drmsd_selection="name CA",                                                    # Cα distance-RMSD
+    lddt_atom_sets=(LddtAtomSet.CA_CB, LddtAtomSet.CA),                           # one lDDT curve per set
+    lddt_inclusion_radius_ang=15.0,
+    # conformational clustering:
+    cluster_method=ClusterMethod.DBSCAN, cluster_cutoff_ang=2.0,
+    cluster_selection="name CA", cluster_stride=1, cluster_min_samples=None,      # None = adaptive
+    # interchain (auto-run at >=2 protein chains):
+    interchain=True, contact_cutoff_nm=0.45,
+    # multistate (REMD/REST2): reference rung to demux (0 = T_min / lambda=1):
+    reference_state=0,
+    html_report=True,
+))
+```
+
+**Metrics vs the design** (RMSD = backbone drift, needs superposition; the rest are
+alignment-free): `rmsd` · `rg` · `rmsf` (per-residue) · `dssp` + `dssp_timeline` · **`q`**
+(fraction of native contacts, Best–Hummer–Eaton soft cutoff) · **`drmsd`** (distance-RMSD) ·
+**`lddt_<set>`** + **`lddt_<set>_per_residue`** (Mariani lDDT; `<set>` ∈ `ca_cb`/`ca`/`backbone`/
+`heavy`, labeled e.g. "lDDT (Cα+Cβ)"). `q`/lDDT are in [0,1]; higher = closer to the design.
+
+**lDDT is whole-system:** it scores every local atom pair within the 15 Å inclusion radius —
+**both intra-chain (fold) and inter-chain (interface) pairs** (only same-residue pairs are
+excluded). So for a complex, lDDT also reflects binding-interface retention, not just each
+chain's own fold. There is no intra-chain-only or interface-only split: per-chain fold drift is
+reported separately as per-chain RMSD (the interchain metrics), and an explicit interface-lDDT /
+per-chain-lDDT is a planned follow-on.
 
 ---
 

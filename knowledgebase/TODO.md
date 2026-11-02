@@ -40,6 +40,10 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 - [x] `analysis/report.py` — self-contained interactive Plotly `report.html` (optional `[report]` extra), on by default (`AnalysisConfig.html_report`), mirrored into storage.
 - [x] Per-residue DSSP timeline (`dssp.dssp_timeline` + `plots.plot_dssp_timeline`) → `analysis/dssp_timeline.png` + an interactive report heatmap; figure size bounded on both axes (GROMACS-style). (mdtraj DSSP lacks DSSP-4 PP-II/`=`; mkdssp-4 backend is a possible follow-on.)
 - [x] Output layout: clustering artifacts → `analysis/clustering/`; multistate analysis → top-level `outdir/analysis/` (consistent with plain MD).
+- [x] Alignment-free fold-retention metrics vs the design, in `drift_report` (plain MD + demuxed REMD/REST2): native-contact **Q** (BHE soft), **dRMSD** (Cα), **lDDT** (biotite, per `LddtAtomSet`, default Cα+Cβ & Cα) + per-residue lDDT; topology-matched `load_prepared_reference`; biotite dep; figures at 300 dpi. (2026-11-02; DECISIONS/HISTORY/GOTCHAS)
+- [ ] lDDT for complexes: expose an explicit **interface-lDDT** (inter-chain pairs only, `exclude_same_chain=True`) and/or **per-chain fold-lDDT** (slice each chain) as named outputs — deferred; whole-system lDDT is the default. (2026-11-02)
+- [ ] Consider unifying all drift metrics on `load_prepared_reference` (drop `input.pdb` for RMSD) — numerically identical Cα RMSD, one reference; deferred to avoid changing which file RMSD reads. (2026-11-02)
+- [ ] Symmetric-residue naming (Asp/Glu/Val/Tyr/Leu/Phe/Arg): biotite lDDT doesn't do the CASP naming-swap max, so all-heavy lDDT reads a 180° side-chain flip as a dip. Only matters if all-heavy lDDT is used as a primary curve; Cα/Cα+Cβ/backbone are immune. (2026-11-02)
 - [ ] `storage status`/gc helper — list orphaned storage folders (marker points to a gone/relinked outdir). Marker enables it; not yet built.
 - [ ] Optional: content/config hash recorded for dedup (run identity stays outdir; layout unchanged).
 

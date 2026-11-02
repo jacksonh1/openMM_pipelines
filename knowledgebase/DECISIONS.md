@@ -9,6 +9,45 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-11-02 — fold-retention metrics: Q + dRMSD + lDDT, alignment-free, vs a topology-matched design
+
+**Decision.** Add three alignment-free drift metrics to `drift_report`, all referenced to the design
+pose: native-contact fraction **Q** (Best, Hummer & Eaton 2013 — all-heavy-atom soft cutoff: 4.5 Å
+native, β=50/nm, λ=1.8, |i−j|≥4), **dRMSD** (Cα distance-RMSD), and **lDDT** (Mariani 2013, via
+`biotite.structure.lddt`) over one or more atom sets (`LddtAtomSet`: `ca_cb`/`ca`/`backbone`/`heavy`),
+default `(ca_cb, ca)`, whole-system, thresholds fixed at the GDT-HA set 0.5/1/2/4 Å, R0=15 Å. The
+per-atom metrics reference a **topology-matched** design pose (`load_prepared_reference`, the protein
+slice of `prepared/topology.cif`), not raw `input.pdb`.
+
+**Why.**
+- *Alignment-free is the point.* These designs are sampled in the folded basin (not folding/unfolding —
+  too slow to sample), so the question is "how far from the design." Distance-based metrics need no fit
+  region, so a floppy tail or hinge doesn't corrupt the measure the way it biases RMSD's superposition.
+- *Q alone is blunt near the folded state.* λ=1.8 keeps a contact "intact" until ~1.8× its native
+  distance, so Q saturates near 1 and poorly ranks stable variants. lDDT's graded 0.5/1/2/4 Å thresholds
+  give the near-native sensitivity Q lacks, plus a per-residue profile (serves flexible-region ID).
+- *Atom-set knob, default Cα+Cβ.* All-heavy lDDT carries fast side-chain motion (ring flips, rotamers) —
+  noise for fold retention. Cα+Cβ captures backbone + coarse side-chain orientation while immune to
+  distal wiggle; Cα is the pLDDT-style named standard. A free list of sets (not a boolean), each plotted
+  and labeled `lDDT (<label>)`, with the set slug in the filename/npz key.
+- *Topology-matched reference (not input.pdb).* Q/lDDT compare specific atoms, so reference and
+  trajectory must share the exact atom layout. `input.pdb` is the raw design (no H, PDBFixer may rebuild
+  atoms, PDB vs FF naming) — not index-aligned to the simulated system; the prepared topology slice is,
+  and is geometrically identical to the design (prep moves no existing heavy atom). dRMSD (Cα-only) could
+  use input.pdb but shares the prepared reference for consistency. RMSD left on input.pdb (unchanged).
+
+**Rejected / not done.**
+- *Residue-level closest-heavy hard-cutoff Q* (FragForge `md_quant.contact_fraction` style) — robust but
+  coarser and a step function; the paper's soft per-atom Q is exact here thanks to the matched reference.
+- *`exclude_same_chain` lDDT knob* — dropped as confusing (biotite's `True` = inter-chain-**only**, not
+  intra-chain; there is no intra-chain-only switch). Whole-system lDDT is the default; an explicit
+  interface-lDDT / per-chain-lDDT can be added later as named outputs.
+- *Unifying all metrics on the prepared reference* (dropping input.pdb for RMSD) — deferred; RMSD would
+  be numerically identical (same Cα coords) but it changes which file RMSD reads.
+
+**Library.** biotite added (lDDT only; mdtraj has none). Reinforces the md_quant principle as "no
+MDAnalysis / MD-specific trajectory libraries," NOT "mdtraj-only" — general structure libraries are fine.
+
 ## 2026-10-31 — prep never models missing residues implicitly
 
 **Decision.** `build_system` builds **no** missing residues. Internal missing-residue gaps hard-fail

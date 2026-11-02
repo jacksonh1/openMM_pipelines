@@ -8,6 +8,41 @@ mistake twice.
 
 ---
 
+## `input.pdb` is the RAW pre-prep design — not atom-aligned to the trajectory; per-atom metrics need `load_prepared_reference`
+
+**Trigger.** Computing any per-atom / heavy-atom-pair metric (native-contact fraction Q, lDDT) against
+`input.pdb` as the reference.
+
+**What goes wrong.** `prepare.py` copies the user's design to `input.pdb` **verbatim, before** PDBFixer.
+The simulated system's topology (`prepared/topology.cif`, which the analysis trajectory is loaded with)
+differs from it: hydrogens are added, PDBFixer may rebuild missing side-chain atoms, and atom
+naming/order can diverge (PDB vs force-field conventions, e.g. Ile `CD1` vs `CD`). So atom index *k* in
+`input.pdb` is **not** atom *k* in the trajectory. A metric that builds atom-index pairs on the reference
+and applies them to the trajectory (`md.compute_distances(traj, pairs)`), or feeds trajectory coords
+against a reference `AtomArray` position-for-position (biotite lDDT), then reads the **wrong atoms** and
+returns garbage — silently, since shapes still match. Cα-only metrics (RMSD, dRMSD) are safe because Cα
+maps 1:1 by residue; heavy-atom / per-atom ones are not.
+
+**Fix.** `load_prepared_reference(outdir)` (analysis/trajectory.py) loads the protein slice of
+`prepared/topology.cif` — the **same** origin as the trajectory topology, so 1:1 atom correspondence —
+and its pre-minimization geometry **is** the design (prep moves no existing heavy atom, so native
+contacts / local distances are identical to `input.pdb`). `drift_report` uses it for Q/dRMSD/lDDT; keep
+`input.pdb` (via `load_input_reference`) only for Cα RMSD. Detect a mismatch loudly: `lddt_to_reference`
+asserts `np.array_equal` of the trajectory and reference selection indices.
+
+## biotite.structure.lddt counts hydrogens by default
+
+**Trigger.** Calling `biotite.structure.lddt` with an all-atom reference/subject from an MD frame.
+
+**What goes wrong.** Its docstring states "by default, also hydrogen atoms are considered." MD
+trajectories are fully protonated, so an all-atom lDDT would fold in every H — padding the local-pair
+count with noisy, constraint-dependent hydrogen distances and diverging from the canonical **heavy-atom**
+lDDT that published scores and tooling report.
+
+**Fix.** Strip H before scoring. Every `LddtAtomSet` selection excludes hydrogens by construction
+(`heavy` = `"not element H"`; `ca` / `ca_cb` / `backbone` name only heavy atoms), so `lddt_to_reference`
+never passes a hydrogen to biotite. If you add a new atom set, keep it heavy-atoms-only.
+
 ## A missing internal loop with no SEQRES defeats the gap guard and makes a 10 Å "peptide bond"
 
 **Trigger.** Preparing a structure that has an internal backbone break (unmodelled loop,
