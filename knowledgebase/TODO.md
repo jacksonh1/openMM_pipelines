@@ -54,6 +54,31 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
   append to `_CATION_PI_NBFIX`; deferred until an ncAA is actually in use. Note the paper leaves
   mixed natural-cation × CGenFF-aromatic pairs and partially-methylated Lys untabulated.
 
+## Structure preparation
+
+> Direction (undecided, 2026-10-31): a dedicated **surgical, full-control prep workflow** — per-residue
+> heterogen/nonstandard handling, protonation (PROPKA), in-silico mutations, synthesis caps, alt-locs,
+> metal parameterization — is likely warranted. Open question: in `openmm_pipelines` or a separate
+> library. The items below are the pieces; this tool's *built-in* prep stays minimal ("simulate the
+> structure as given", fail loud), and rich prep is deferred to that workflow.
+
+- [x] **Don't build missing residues** — `_drop_missing_residues` after the internal-gap guard;
+  terminal tails (SEQRES > coordinates) were silently built into an extended chain. (2026-10-31)
+- [ ] **PROPKA / pdb2pqr protonation** — current protonation is PDBFixer's fixed-pH heuristic
+  (`addMissingHydrogens(ph)`): no per-residue control, no pKa prediction. Optionally run pdb2pqr+PROPKA
+  at the target pH to assign states (His tautomer/charge, Asp/Glu/Lys/Cys) and feed them in. New
+  dependency; opt-in. (requested 2026-10-31)
+- [ ] (considering) **opt-in heterogen strip** — `PDBFixer.removeHeterogens` is all-or-nothing: it also
+  removes ions, and any in-chain modified residue (→ chain gap, caught by `_assert_no_backbone_breaks`,
+  so loud not silent). If added, make it surgical (keep water + ions + chain-bonded residues; strip only
+  free non-ion heterogens) and warn-list what was removed. (discussed 2026-10-31)
+- [ ] (candidate) **`replaceNonstandardResidues`** (e.g. MSE→MET) as an opt-in + loud step; lossy for
+  real PTMs (SEP→SER drops the phosphate), so never a default. (discussed 2026-10-31)
+- NOTE: force fields have **nonbonded** templates for common ions (Na/K/Cl/Mg/Ca/Zn; Fe/Mn need an
+  oxidation-state resname), so a lone ion runs as a charged LJ sphere — but that does NOT model metal
+  **coordination** (geometry/charge-transfer). Structural/catalytic metals need a bonded model
+  (MCPB.py / cationic dummy atoms / 12-6-4) — out of scope for this tool.
+
 ## Science-review items to resolve before trusting production
 
 - [ ] Restraint `x0` (absolute) vs MC barostat COM rescaling — confirm benign.

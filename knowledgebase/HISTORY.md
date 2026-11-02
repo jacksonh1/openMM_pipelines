@@ -5,6 +5,27 @@ factual.
 
 ---
 
+## 2026-10-31 — prep: never build missing residues (silent terminal-extension bug)
+
+- **Found via the Ellen WW-domain MD runs:** PDBFixer was building 21 **terminal** residues into an
+  idealized extended tail (`Refine43_chainA_only_WW34`: SEQRES 98 vs 77 coordinate residues) -> ~143 Å
+  solvent box instead of ~57 Å. `_assert_no_internal_gaps` only catches internal gaps, so terminal runs
+  passed silently. Also explains the large unrestrained-minimization drift (un-superposed Cα RMSD
+  ~2.75 Å, one residue ~10 Å) and plausibly the rare NVT NaN seen earlier.
+- **Fix:** `build_system` calls `_drop_missing_residues(fixer)` after the internal-gap guard — clears
+  `fixer.missingResidues` (no residues built; internal gaps still fail loud) and warns with the count.
+  Missing atoms/H within existing residues are still completed. Validated: both WW34 inputs build 77
+  residues, 56.8 Å dodecahedron box, warning naming the 21 skipped. New `test_build.py` unit tests;
+  full suite green (148 passed).
+- **Box shape verified, not a bug:** the pipeline produces a correct rhombic dodecahedron
+  (a=b=c=56.8 Å, angles 60/60/90). A viewer showing a "rectangular prism" renders the triclinic unit
+  cell, whose a–b face is square (γ=90°); no box code changed.
+- **NVT NaN (context):** the one-off R448A + cation-π NaN did **not** reproduce (0/17 builds survived
+  50k NVT steps, incl. pe₀ up to 1.5×10¹¹ kJ/mol). `build_system` is nondeterministic even with stdlib
+  `random` seeded in-process (not a seedable RNG — likely atom-object set iteration in `addSolvent`), so
+  no clean seeded-solvation fix; rare (<~6%), re-run clears. The terminal tail was the real, fixable bug.
+- Extended-structure jobs cancelled; their outdirs + storage scrubbed.
+
 ## 2026-10-30 — resume / extend an interrupted production run (MD, REMD, REST2)
 
 - **Added `resume(outdir, *, extend_to_ns=None, platform=None)`** (top-level, `resume.py`) — continues

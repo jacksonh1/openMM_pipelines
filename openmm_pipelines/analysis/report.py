@@ -93,6 +93,25 @@ def _sections(go, summary: dict, arrays: dict, x_key: str, x_label: str) -> list
         sections.append(("Per-residue flexibility (RMSF)",
                          _line(go, arrays["resseq"], arrays["rmsf_ang"], "residue", "Cα RMSF (Å)")))
 
+    if "q_native_contacts" in arrays:
+        sections.append(("Native-contact fraction (Q)",
+                         _line(go, x, arrays["q_native_contacts"], x_label, "Q")))
+    if "drmsd_ang" in arrays:
+        sections.append(("Distance-RMSD to design",
+                         _line(go, x, arrays["drmsd_ang"], x_label, "dRMSD (Å)")))
+    lddt = summary.get("lddt")
+    if lddt:
+        glob = {spec["label"]: arrays[f"lddt_{k}"] for k, spec in lddt.items() if f"lddt_{k}" in arrays}
+        if glob:
+            sections.append(("lDDT to design", _multiline(go, x, glob, x_label, "lDDT", yrange=[0, 1])))
+        if "lddt_resseq" in arrays:
+            per = {spec["label"]: arrays[f"lddt_{k}_per_residue"] for k, spec in lddt.items()
+                   if f"lddt_{k}_per_residue" in arrays}
+            if per:
+                sections.append(("Per-residue lDDT",
+                                 _multiline(go, arrays["lddt_resseq"], per, "residue",
+                                            "mean lDDT", yrange=[0, 1])))
+
     ss = {k[3:]: arrays[k] for k in ("ss_helix", "ss_sheet", "ss_coil", "ss_na") if k in arrays}
     if ss:
         sections.append(("Secondary structure",
@@ -171,6 +190,16 @@ def _metric_rows(summary: dict) -> list[tuple[str, str]]:
     rg = summary.get("rg_ang")
     if rg:
         rows.append(("Rg (Å)", f"mean {_fmt(rg['mean'])} ± {_fmt(rg['std'])}"))
+    q = summary.get("q_native_contacts")
+    if q:
+        rows.append(("Q (native contacts)", f"mean {_fmt(q['mean'])} · final {_fmt(q['final'])}"))
+    dr = summary.get("drmsd_ang")
+    if dr:
+        rows.append(("dRMSD to design (Å)", f"mean {_fmt(dr['mean'])} · max {_fmt(dr['max'])}"))
+    lddt = summary.get("lddt")
+    if lddt:
+        rows.append(("lDDT to design",
+                     " · ".join(f"{v['label']} {_fmt(v['mean'])}" for v in lddt.values())))
     ssf = summary.get("ss_fraction_mean")
     if ssf:
         rows.append(("secondary structure (mean)",

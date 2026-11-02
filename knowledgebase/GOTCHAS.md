@@ -393,3 +393,25 @@ through `_run_report`); the resume helper must **return the sampler and the call
 referenced until the report is read** (then `del sampler`; `reporter.close()` is idempotent — it
 guards on `isopen()` — so the `finally` close is a safe no-op). Found 2026-10-30 building REMD/REST2
 resume.
+
+## PDBFixer silently builds missing TERMINAL residues from SEQRES -> invented extension + huge box
+
+**Trigger.** Preparing a sliced / designed structure whose SEQRES declares more residues than the
+coordinates contain — e.g. a single-domain slice (a WW domain) still carrying the full-construct
+SEQRES, or any truncated model that kept the parent header.
+
+**What goes wrong.** `build_system` runs `fixer.findMissingResidues()` then `fixer.addMissingAtoms()`,
+and `addMissingAtoms` builds everything in `fixer.missingResidues` — including **terminal** runs.
+`_assert_no_internal_gaps` catches *internal* gaps (fail loud) but terminal missing residues pass by
+design, so PDBFixer lays them down as an **idealized extended chain**. It is silent: prep succeeds and
+the run proceeds on the wrong system. Symptoms: solvent box far larger than expected (a ~40-residue WW
+domain gave a **~143 Å** rhombic-dodecahedron box instead of ~57 Å), a long floppy invented tail, large
+minimization movement (un-superposed Cα RMSD ~2.75 Å, one residue ~10 Å), and occasional NVT NaN. Real
+case: `Refine43_chainA_only_WW34` — SEQRES 98 vs 77 coordinate residues -> 21-residue terminal extension.
+
+**Fix.** `build_system` calls `_drop_missing_residues(fixer)` immediately after the internal-gap guard:
+it clears `fixer.missingResidues` (internal gaps already failed, so the remainder is terminal) and warns
+with the count, so **no residues are built** — only missing atoms/hydrogens within existing residues.
+The pipeline simulates the structure as given; chain completion is a deliberate, separate step
+(DECISIONS 2026-10-31). **Detect** on a new input: compare SEQRES vs ATOM residue counts, or check the
+post-prep protein-residue count / box size. Found 2026-10-31 via the Ellen WW-domain MD runs.

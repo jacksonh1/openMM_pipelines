@@ -26,6 +26,17 @@ class ClusterMethod(str, Enum):
     HIERARCHICAL = "hierarchical"  # scipy average-linkage on optimal pairwise Cα-RMSD; O(N^2), opt-in
 
 
+class LddtAtomSet(str, Enum):
+    """Atom subset a per-design lDDT curve is computed over. The value is the file/key slug;
+    the human label lives in `metrics._LDDT_SPEC`. Narrower sets suppress fast side-chain motion;
+    Cα is the pLDDT-style named standard, all-heavy the canonical all-atom lDDT."""
+
+    CA_CB = "ca_cb"        # Cα+Cβ    — backbone + coarse side-chain orientation (Gly -> Cα only)
+    CA = "ca"              # Cα       — backbone/fold topology only
+    BACKBONE = "backbone"  # N,Cα,C,O — backbone incl. carbonyl geometry
+    HEAVY = "heavy"        # all heavy atoms — full all-atom lDDT
+
+
 class AnalysisConfig(BaseModel, frozen=True):
     """Knobs for `analyze` / `analyze_remd` / `analyze_rest2`. All defaults system-agnostic."""
 
@@ -40,6 +51,21 @@ class AnalysisConfig(BaseModel, frozen=True):
     # ~1.5% of the clustered frames (floor 10), so the diffuse tail falls into noise instead of
     # fragmenting. Pin an int for reproducibility. See clustering._resolve_min_count.
     cluster_min_samples: int | None = None
+
+    # --- fold-retention vs the design pose (drift report, all alignment-free) ---
+    # Native-contact fraction Q (Best, Hummer & Eaton, PNAS 2013): all-heavy-atom pairs from
+    # residues >= q_min_seq_sep apart, < q_native_cutoff_ang in the design, softened by a sigmoid.
+    # Defaults are the paper's all-atom values (beta = 5/Å = 50/nm, lambda = 1.8).
+    q_native_cutoff_ang: float = 4.5
+    q_min_seq_sep: int = 4          # |i-j| >= this (paper uses |i-j| > 3); excludes trivial local pairs
+    q_beta_per_nm: float = 50.0
+    q_lambda: float = 1.8
+    # Distance-RMSD to the design (superposition-free continuous analog of RMSD).
+    drmsd_selection: str = "name CA"
+    # lDDT to the design (Mariani et al., Bioinformatics 2013), one curve per atom set. Thresholds
+    # fixed at the GDT-HA set 0.5/1/2/4 Å; whole-system (all local pairs, only same-residue excluded).
+    lddt_atom_sets: tuple[LddtAtomSet, ...] = (LddtAtomSet.CA_CB, LddtAtomSet.CA)
+    lddt_inclusion_radius_ang: float = 15.0  # R0 (paper default)
 
     # --- interchain / multi-chain (auto-run when >=2 protein chains) ---
     interchain: bool = True
@@ -60,4 +86,13 @@ class AnalysisConfig(BaseModel, frozen=True):
             self.cluster_min_samples is None or self.cluster_min_samples >= 1
         ), "cluster_min_samples must be None (adaptive) or >= 1"
         assert self.reference_state >= 0, "reference_state must be >= 0"
+        assert self.q_native_cutoff_ang > 0, "q_native_cutoff_ang must be > 0"
+        assert self.q_min_seq_sep >= 1, "q_min_seq_sep must be >= 1"
+        assert self.q_beta_per_nm > 0, "q_beta_per_nm must be > 0"
+        assert self.q_lambda > 0, "q_lambda must be > 0"
+        assert len(self.lddt_atom_sets) >= 1, "lddt_atom_sets must be non-empty"
+        assert len(set(self.lddt_atom_sets)) == len(self.lddt_atom_sets), (
+            "lddt_atom_sets must not repeat an atom set"
+        )
+        assert self.lddt_inclusion_radius_ang > 0, "lddt_inclusion_radius_ang must be > 0"
         return self

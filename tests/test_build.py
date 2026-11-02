@@ -14,6 +14,7 @@ from openmm_pipelines.preparation.build import (
     PrepareError,
     _assert_no_backbone_breaks,
     _count_disulfides,
+    _drop_missing_residues,
     build_system,
 )
 from openmm_pipelines.forcefield import ProteinFF, WaterModel
@@ -125,3 +126,26 @@ def test_backbone_break_detected():
 def test_bonded_backbone_passes():
     top, pos = _two_residue_chain(cn_gap_nm=0.133)  # a real peptide bond
     _assert_no_backbone_breaks(top, pos)  # no raise
+
+
+# --- terminal missing-residue handling (do NOT build an invented tail) ---
+
+class _FakeFixer:
+    """Minimal stand-in: _drop_missing_residues only touches .missingResidues."""
+    def __init__(self, missing):
+        self.missingResidues = missing
+
+
+def test_drop_missing_residues_clears_and_warns():
+    # Two insertion points, 3 residues total (SEQRES tail absent from coordinates).
+    fixer = _FakeFixer({(0, 0): ["ALA", "GLY"], (0, 77): ["SER"]})
+    with pytest.warns(UserWarning, match="skipping 3 missing residue"):
+        _drop_missing_residues(fixer)
+    assert fixer.missingResidues == {}  # all dropped — nothing left to build
+
+
+def test_drop_missing_residues_silent_when_none(recwarn):
+    fixer = _FakeFixer({})
+    _drop_missing_residues(fixer)
+    assert fixer.missingResidues == {}
+    assert len(recwarn) == 0  # no warning when there is nothing to skip

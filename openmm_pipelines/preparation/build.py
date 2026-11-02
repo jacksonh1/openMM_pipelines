@@ -6,11 +6,20 @@ so OpenMM applies them correctly whether the force field uses a `NonbondedForce`
 here: no backbone chain break between consecutive residues (a SEQRES-independent catch
 for a missing internal loop), disulfide bonds must survive PDBFixer, and solvation must
 produce the water model's expected per-residue geometry.
+
+Missing residues are never built: internal gaps fail loud, and terminal tails (residues in
+SEQRES but absent from the coordinates) are skipped with a warning — otherwise PDBFixer lays
+them down as an idealized extended chain that inflates the solvent box. We simulate the
+structure as given; completing a chain is a deliberate, separate step, not an implicit one.
+
+Ligands, cofactors, metals and modified/nonstandard residues are not parameterized; if present,
+`createSystem` fails loud ("No template found for residue ..."). Strip or parameterize them first.
 """
 
 from __future__ import annotations
 
 import io
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -63,6 +72,28 @@ def _assert_no_internal_gaps(fixer) -> None:
         )
 
 
+def _drop_missing_residues(fixer) -> None:
+    """Discard PDBFixer's ENTIRE missing-residue list so NO residues are built.
+
+    This drops ALL missing residues, not only terminal ones. It is meant to be called AFTER
+    `_assert_no_internal_gaps` (which fails loud on any internal gap), so in this pipeline what it
+    actually discards is only terminal tails — residues declared in SEQRES but absent from the
+    coordinates. Building those lays down a floppy, idealized extended chain that inflates the
+    solvent box, so we skip them and simulate the structure as given (warning if anything is
+    skipped). Missing ATOMS within existing residues are untouched — that is
+    `findMissingAtoms`/`missingAtoms`, handled separately. ASSUMES `findMissingResidues` ran.
+    """
+    if fixer.missingResidues:
+        n = sum(len(v) for v in fixer.missingResidues.values())
+        warnings.warn(
+            f"skipping {n} missing residue(s) declared in SEQRES but absent from the coordinates; "
+            "simulating the structure as given (not modeling them). Model them in the input "
+            "structure first if you want them.",
+            stacklevel=2,
+        )
+    fixer.missingResidues = {}
+
+
 _PEPTIDE_BOND_MAX_NM = 0.2  # a real C(i)-N(i+1) peptide bond is ~0.133 nm; a consecutive
 # protein pair farther apart than this is a backbone break, not a bond.
 
@@ -111,6 +142,9 @@ def build_system(cfg: PrepConfig) -> BuiltSystem:
     ss_before = _count_disulfides(fixer.topology)  # capture the input pose's disulfides
     fixer.findMissingResidues()
     _assert_no_internal_gaps(fixer)  # GUARD: no internal chain breaks in a designed input
+    # Internal gaps already failed above, so the remaining missing residues are terminal tails;
+    # drop them all rather than build an invented extension (simulate the structure as given).
+    _drop_missing_residues(fixer)
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
     fixer.addMissingHydrogens(cfg.ph)

@@ -16,6 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import mdtraj as md
+import numpy as np
+from openmm import unit
 from openmm.app import PDBxFile
 
 
@@ -49,6 +51,27 @@ def to_protein(traj: md.Trajectory) -> md.Trajectory:
 def load_input_reference(outdir) -> md.Trajectory:
     """The design pose: `input.pdb`, protein atoms only (single frame reference)."""
     ref = md.load(str(Path(outdir) / "input.pdb"))
+    return to_protein(ref)
+
+
+def load_prepared_reference(outdir) -> md.Trajectory:
+    """The design pose carrying the TRAJECTORY's exact atom layout: the protein slice of
+    `prepared/topology.cif` (single frame).
+
+    `load_input_reference` reads the raw `input.pdb`, whose topology differs from the simulated
+    system (no hydrogens, PDB atom naming), so it is usable only through a Cα mapping. This loader
+    instead builds from `prepared/topology.cif` — the same file the analysis trajectory's topology
+    comes from — so every atom maps 1:1 to the trajectory. That is what the per-atom and
+    heavy-atom-pair metrics (native-contact Q, lDDT) need. Its internal geometry is the design:
+    prep adds hydrogens and rebuilds only missing atoms, never moving an existing heavy atom, so
+    the native contacts / local distances are the designed pose's (identical to `input.pdb`).
+    """
+    cif = Path(outdir) / "prepared" / "topology.cif"
+    assert cif.exists(), f"no prepared topology at {cif} — run prepare() first"
+    pdbx = PDBxFile(str(cif))
+    topology = md.Topology.from_openmm(pdbx.topology)
+    xyz_nm = np.array(pdbx.getPositions().value_in_unit(unit.nanometer), dtype=np.float32)
+    ref = md.Trajectory(xyz_nm[None, :, :], topology)  # single frame
     return to_protein(ref)
 
 

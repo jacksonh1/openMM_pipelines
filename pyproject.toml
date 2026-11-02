@@ -10,7 +10,8 @@ requires-python = ">=3.10"              # match statements, zip(strict=True)
 dependencies = [
     "openmm>=8.6",
     "pdbfixer",                          # conda-forge; structure prep + protonation
-    "mdtraj",                            # the single trajectory library (no MDAnalysis)
+    "mdtraj",                            # the trajectory library (no MDAnalysis / MD-specific libs)
+    "biotite>=1.0",                      # lDDT to the design pose (biotite.structure.lddt)
     "numpy",
     "scipy",                             # analysis clustering (hierarchical)
     "scikit-learn>=1.3",                 # default DBSCAN + HDBSCAN conformational clustering (>=1.3 ships HDBSCAN)

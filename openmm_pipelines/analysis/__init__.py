@@ -32,6 +32,7 @@ from .report import write_html_report
 from .trajectory import (
     export_processed_trajectory,
     load_input_reference,
+    load_prepared_reference,
     load_system_trajectory,
     superpose_to_reference,
     to_protein,
@@ -46,6 +47,7 @@ __all__ = [
     "export_processed_trajectory",
     "to_protein",
     "load_input_reference",
+    "load_prepared_reference",
     "superpose_to_reference",
     "rmsd_to_reference",
     "radius_of_gyration",
@@ -79,6 +81,7 @@ def analyze(outdir, config: AnalysisConfig | None = None) -> Path:
 
         protein = to_protein(load_system_trajectory(outdir))  # imaged, protein-only, NOT superposed
         reference = load_input_reference(outdir)
+        native_reference = load_prepared_reference(outdir)  # topology-matched design (Q / dRMSD / lDDT)
         time_ps = protein.time
 
         # Interchain metrics first: they are minimum-image-based and need coordinates + box in
@@ -96,8 +99,8 @@ def analyze(outdir, config: AnalysisConfig | None = None) -> Path:
 
         # Drift + clustering need frames superposed onto the design pose.
         superpose_to_reference(protein, reference)
-        drift, arrays = drift_report(protein, reference, adir, time_ps, "time (ps)",
-                                     "drift from input pose")
+        drift, arrays = drift_report(protein, reference, native_reference, adir, time_ps,
+                                     "time (ps)", "drift from input pose", config)
         cluster = cluster_and_report(protein, reference, config, adir, time_ps, "time (ps)")
 
         summary.update(drift)

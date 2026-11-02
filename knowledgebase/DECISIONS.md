@@ -9,6 +9,23 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-10-31 — prep never models missing residues implicitly
+
+**Decision.** `build_system` builds **no** missing residues. Internal missing-residue gaps hard-fail
+(`_assert_no_internal_gaps` -> model them externally); terminal tails (SEQRES longer than the
+coordinates) are skipped with a warning (`_drop_missing_residues`) and the structure is simulated as
+given. Missing atoms/hydrogens within existing residues are still completed.
+
+**Why.** The tool's premise is "start from the given designed structure." Silently completing a chain
+invents residues — terminal runs become an idealized extended tail that inflates the solvent box
+(~143 -> ~57 Å on a WW domain), adds a floppy segment, and distorts the very structure being assessed,
+with no error raised. Measuring drift against geometry PDBFixer invented is scientifically misleading.
+Chain completion, if ever wanted, must be an explicit opt-in and may be out of scope for this tool.
+
+**Rejected.** (1) The prior implicit behavior — `addMissingAtoms` building terminal residues (the bug).
+(2) Auto-filling small internal gaps via PDBFixer — kept as a hard fail; PDBFixer's modeled loops are
+crude and unrefined, a liability for a structure under assessment.
+
 ## 2026-10-30 — resume / extend: continue an interrupted run (library-only, documented-mechanism)
 
 **Decision.** A top-level `resume(outdir, *, extend_to_ns=None, platform=None)` continues an

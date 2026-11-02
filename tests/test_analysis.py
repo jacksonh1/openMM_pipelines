@@ -131,6 +131,68 @@ def test_radius_of_gyration_shape_and_positive():
     assert np.all(rg > 0)
 
 
+# --- alignment-free fold-retention metrics (Q / dRMSD / lDDT) on a real structure ---
+
+_STRUCTURE = Path(__file__).parents[1] / "examples" / "input_structures" / "helix_fusion.pdb"
+
+
+def _structure():
+    return md.load(str(_STRUCTURE))
+
+
+def test_native_contact_fraction_is_one_at_reference_and_breaks_when_expanded():
+    from openmm_pipelines.analysis.metrics import native_contact_fraction
+
+    ref = _structure()
+    q = native_contact_fraction(ref, ref)  # frame == design
+    assert q.shape == (1,)
+    assert q[0] > 0.99  # soft sigmoid at r == r0 -> ~1 (not exactly 1)
+    blown_up = md.Trajectory(ref.xyz * 2.5, ref.topology)  # 2.5x > lambda=1.8 -> contacts broken
+    assert native_contact_fraction(blown_up, ref)[0] < 0.05
+
+
+def test_ca_drmsd_is_zero_at_reference_and_grows():
+    from openmm_pipelines.analysis.metrics import ca_drmsd
+
+    ref = _structure()
+    assert ca_drmsd(ref, ref)[0] == pytest.approx(0.0, abs=1e-4)
+    expanded = md.Trajectory(ref.xyz * 1.1, ref.topology)  # 10% larger -> several Å dRMSD
+    assert ca_drmsd(expanded, ref)[0] > 1.0
+
+
+def test_lddt_is_one_at_reference_for_every_atom_set():
+    from openmm_pipelines.analysis.metrics import LDDT_SPEC, lddt_to_reference
+
+    ref = _structure()
+    for selection, _label in LDDT_SPEC.values():
+        glob, per_res, resseq = lddt_to_reference(ref, ref, selection)
+        assert glob.shape == (1,)
+        assert glob[0] == pytest.approx(1.0, abs=1e-6)
+        assert per_res.shape == (1, len(resseq))
+        assert np.allclose(per_res[0], 1.0)
+
+
+def test_lddt_per_residue_flags_the_displaced_residue():
+    from openmm_pipelines.analysis.metrics import lddt_to_reference
+
+    ref = _structure()
+    ca = ref.topology.select("name CA")
+    target = ref.topology.atom(int(ca[len(ca) // 2])).residue  # a middle residue
+    moved = md.Trajectory(ref.xyz.copy(), ref.topology)
+    moved.xyz[0, [a.index for a in target.atoms], :] += 0.5  # 5 Å in every dim
+    _glob, per_res, resseq = lddt_to_reference(moved, ref, "name CA")
+    assert resseq[int(np.argmin(per_res[0]))] == target.resSeq  # the moved residue is worst
+
+
+def test_lddt_fails_loud_on_mismatched_atom_layout():
+    from openmm_pipelines.analysis.metrics import lddt_to_reference
+
+    ref = _structure()
+    sliced = ref.atom_slice(ref.topology.select("resid 1 to 40"))  # fewer atoms than ref
+    with pytest.raises(AssertionError, match="mismatch|layout"):
+        lddt_to_reference(sliced, ref, "name CA")
+
+
 def test_dbscan_is_default_clusters_all_frames_and_tags_design_like():
     traj = _two_blob_traj(per=12)  # 24 frames, reference = blob A
     res = cluster_conformations(
@@ -279,6 +341,8 @@ def test_analyze_demo_smoke():
     adir = analyze(DEMO)
     for name in ("analysis_report.json", "analysis_data.npz",
                  "rmsd.png", "rg.png", "rmsf.png", "dssp.png", "dssp_timeline.png",
+                 "q.png", "drmsd.png", "lddt_ca_cb.png", "lddt_ca.png",
+                 "lddt_ca_cb_per_residue.png", "lddt_ca_per_residue.png",
                  "clustering/cluster_populations.png", "clustering/cluster_timeseries.png",
                  "report.html", "processed.xtc", "processed_topology.pdb"):
         assert (adir / name).exists(), f"missing {name}"

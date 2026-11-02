@@ -14,28 +14,37 @@ import numpy as np  # noqa: E402
 def _save(fig, path) -> Path:
     path = Path(path)
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=300)
     plt.close(fig)
     return path
 
 
-def plot_timeseries(x, y, ylabel, path, title=None, xlabel="time (ps)"):
+def plot_timeseries(x, y, ylabel, path, title=None, xlabel="time (ps)", ylim=None):
     fig, ax = plt.subplots(figsize=(6, 3.5))
     ax.plot(x, y, lw=1.0)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     if title:
         ax.set_title(title)
     return _save(fig, path)
 
 
-def plot_rmsf(resseq, rmsf_ang, path):
+def plot_per_residue(resseq, values, ylabel, title, path, ylim=None):
+    """One value per residue on a residue x-axis (RMSF, per-residue lDDT, …)."""
     fig, ax = plt.subplots(figsize=(6, 3.5))
-    ax.plot(resseq, rmsf_ang, lw=1.0)
+    ax.plot(resseq, values, lw=1.0)
     ax.set_xlabel("residue")
-    ax.set_ylabel("Cα RMSF (Å)")
-    ax.set_title("per-residue flexibility")
+    ax.set_ylabel(ylabel)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.set_title(title)
     return _save(fig, path)
+
+
+def plot_rmsf(resseq, rmsf_ang, path):
+    return plot_per_residue(resseq, rmsf_ang, "Cα RMSF (Å)", "per-residue flexibility", path)
 
 
 def plot_neighbor_acceptance(neighbor_acceptance, path):

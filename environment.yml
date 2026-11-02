@@ -24,6 +24,7 @@ dependencies:
   # ── Scientific stack ────────────────────────────────────────────────
   - numpy
   - scipy
+  - biotite>=1.0        # lDDT to the design pose (analysis)
   - scikit-learn>=1.3   # default DBSCAN + HDBSCAN conformational clustering (analysis)
   - pandas
   - numba

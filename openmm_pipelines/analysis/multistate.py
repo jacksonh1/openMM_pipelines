@@ -37,7 +37,12 @@ from .config import AnalysisConfig
 from .drift import drift_report
 from .interchain import interchain_report, protein_chain_ids
 from .report import write_html_report
-from .trajectory import load_input_reference, superpose_to_reference, to_protein
+from .trajectory import (
+    load_input_reference,
+    load_prepared_reference,
+    superpose_to_reference,
+    to_protein,
+)
 
 
 def _open_reporter(run_dir: Path, nc_name: str) -> MultiStateReporter:
@@ -154,6 +159,7 @@ def analyze_multistate(
         # yet superposed. Demuxed frames are an ensemble ordered by iteration, not a time series.
         traj = to_protein(demux_state(run_dir, nc_name, reference_state))
         reference = load_input_reference(outdir)
+        native_reference = load_prepared_reference(outdir)  # topology-matched design (Q / dRMSD / lDDT)
         frame_index = np.arange(traj.n_frames, dtype=float)
 
         # Interchain metrics first: minimum-image-based, so they need coordinates + box in the
@@ -173,8 +179,8 @@ def analyze_multistate(
         traj[0].save_pdb(str(adir / f"state{reference_state:02d}_topology.pdb"))
 
         drift, arrays = drift_report(
-            traj, reference, adir, frame_index, "demuxed frame",
-            f"reference ensemble (state {reference_state})",
+            traj, reference, native_reference, adir, frame_index, "demuxed frame",
+            f"reference ensemble (state {reference_state})", config,
         )
         cluster = cluster_and_report(
             traj, reference, config, adir, frame_index, "demuxed frame index"
