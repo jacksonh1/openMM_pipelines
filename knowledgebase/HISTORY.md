@@ -5,6 +5,22 @@ factual.
 
 ---
 
+## 2026-11-03 — terminology: "design" → "reference" / "input structure"
+
+- **Repo-wide rename** of the "design" terminology that referred to the simulated input structure, so the
+  tool reads as general (not protein-design-specific). "reference" for the comparison target; "input
+  structure" / "input pose" where the supplied structure is meant. Full map + rationale in DECISIONS 2026-11-03.
+- **Identifier/schema changes** (analysis): `rmsd_to_design_ang` → `rmsd_to_reference_ang`;
+  `ClusterResult.{representative_rmsd_to_design_ang, design_like_cluster, design_like_fraction}` →
+  `{representative_rmsd_to_reference_ang, reference_like_cluster, reference_like_fraction}` (same for the
+  report-JSON keys); `plot_cluster_populations` param renamed. Prose/docstrings/plot labels throughout
+  `analysis/` + `preparation/build.py`, `rest2/scaling.py`, `lib/selections.py` generalized.
+- **Docs** updated to match: README, CODEBASE_SHAPE, CLAUDE.md overview + 2 GOTCHAS index lines, GOTCHAS.md
+  (input.pdb / SEQRES pitfalls), one open TODO, this log. Historical dated DECISIONS/HISTORY entries left as-is.
+- **Cross-repo leak removed**: dropped "XBL peptides" / "this project targets" from `build.py` + `scaling.py`.
+- **Verified**: cross-repo grep confirmed no consumer reads the renamed keys/symbols; full suite **153 passed**
+  (`openmm_env`, 13m52s).
+
 ## 2026-11-02 — analysis: Q / dRMSD / lDDT fold-retention metrics + 300 dpi figures
 
 - **Three alignment-free fold-retention metrics vs the design**, added to `analysis/metrics.py` and

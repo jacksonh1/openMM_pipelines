@@ -9,7 +9,7 @@ explicit-solvent box's potential-energy histograms to overlap (acceptance scales
 reach — here 300 K up to an effective 450 K — mixes with a HANDFUL of replicas. Every
 replica runs at the physical 300 K; replica m's solute is scaled by λ_m = 300/T_eff_m.
 State 0 is λ=1, the unscaled physical ensemble — the only one that is a real Boltzmann
-sample at the design temperature, and the one analysis de-multiplexes. See `replica_walk.png`.
+sample at the reference temperature, and the one analysis de-multiplexes. See `replica_walk.png`.
 """
 
 from pathlib import Path
@@ -37,7 +37,7 @@ def main() -> None:
         density_max_seg=12,
         density_tol_rel=0.02,
         # λ ladder + short REST2 (NVT production, all replicas at temperature_k)
-        temperature_k=300.0,  # physical T_0 = reference / design temperature (λ=1)
+        temperature_k=300.0,  # physical T_0 = reference temperature (λ=1)
         max_effective_temperature_k=450.0,  # top rung's EFFECTIVE temperature
         # Only the solute is tempered, so this 300->450 K effective reach needs just a few
         # rungs (contrast the 14 the T-REMD demo needed for a narrower 300-360 K range).

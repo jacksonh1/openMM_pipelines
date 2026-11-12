@@ -122,4 +122,4 @@ Concise backlog. One terse bullet per item. Promote a multi-session effort to a
 ## Analysis — clustering
 
 - [x] Clustering over-fragmentation fix — DBSCAN default + adaptive `min_samples`, HDBSCAN opt-in, explicit `cluster_stride` (no silent 2000-frame cap), hierarchical fails loud over `MAX_HIERARCHICAL_FRAMES`, sklearn → core dep. (2026-10-28; DECISIONS)
-- [ ] `design_like_fraction` is read off cluster populations, so a genuine design-like basin holding <1.5% of frames collapses into DBSCAN noise and under-reports retention. Consider computing retention directly as the fraction of frames within `cluster_cutoff_ang` RMSD of the design pose, independent of clustering.
+- [ ] `reference_like_fraction` is read off cluster populations, so a genuine reference-like basin holding <1.5% of frames collapses into DBSCAN noise and under-reports retention. Consider computing retention directly as the fraction of frames within `cluster_cutoff_ang` RMSD of the reference pose, independent of clustering.

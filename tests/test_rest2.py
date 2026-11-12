@@ -140,7 +140,7 @@ def test_analyze_demuxes_reference_lambda(rest2_run):
     summary = json.loads((adir / "rest2_analysis_report.json").read_text())
     assert summary["reference_state"] == 0
     assert summary["n_frames_demuxed"] >= 1
-    assert summary["rmsd_to_design_ang"]["mean"] >= 0.0
+    assert summary["rmsd_to_reference_ang"]["mean"] >= 0.0
     assert summary["clustering"]["n_clusters"] >= 1  # λ=1 ensemble clustered (Cα-RMSD)
 
     assert (adir / "state00_ensemble.xtc").exists()     # PBC-imaged, desolvated, aligned, centered

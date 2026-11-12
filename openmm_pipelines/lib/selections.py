@@ -1,7 +1,7 @@
 """Topology atom selections.
 
 Operates on an OpenMM `Topology`. `protein_heavy_atoms` is the restraint selection:
-protein heavy atoms (no hydrogens, no solvent/ions), used to hold the designed pose
+protein heavy atoms (no hydrogens, no solvent/ions), used to hold the input pose
 through equilibration.
 """
 

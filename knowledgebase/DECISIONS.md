@@ -9,6 +9,41 @@ running code except where "Verified" is noted.
 
 ---
 
+## 2026-11-03 — terminology: "design" → "reference" / "input structure" (generalize beyond protein design)
+
+**Decision.** Rename the analysis/user-facing terminology from "design" to neutral terms: **"reference"**
+where it names the comparison target drift is measured against (matching the pre-existing
+`rmsd_to_reference` / `load_prepared_reference` vocabulary the code already used everywhere else), and
+**"input structure" / "input pose"** where the text explicitly names the supplied starting structure. The
+tool characterizes any folded structure, designed or natural, so the vocabulary should not imply it is
+protein-design-specific.
+
+**What changed (identifiers — serialized-schema change).**
+- `ClusterResult` fields + report-JSON keys: `representative_rmsd_to_design_ang` →
+  `representative_rmsd_to_reference_ang`, `design_like_cluster` → `reference_like_cluster`,
+  `design_like_fraction` → `reference_like_fraction`.
+- `drift_report` / multistate summary key `rmsd_to_design_ang` → `rmsd_to_reference_ang`.
+- `plots.plot_cluster_populations` parameter `design_like_cluster` → `reference_like_cluster` (callers
+  pass it positionally — safe). Plot titles / HTML-report labels "… to design" → "… to reference".
+- Tests updated to the new names (`test_analysis.py`, `test_remd.py`, `test_rest2.py`).
+
+**Cross-repo safety (checked BEFORE renaming the keys).** No consumer code reads these keys or imports a
+renamed symbol: FragForge `kernels/simulation/openmm_driver.py`, XBL `pass_reanalyze_openmm.py`, snekwrap,
+and `Ellen_WW_simulations/submit_jobs/*` only import `analyze` / `analyze_remd` / `analyze_rest2` /
+`AnalysisConfig` / `ClusterMethod` / `build_system` etc. (none design-named). The only external hits for
+the old keys are frozen generated reports under `Ellen_WW_simulations/outputs/` — static artifacts, not
+read back. The FragForge/snekwrap Boltz2 `ca_rmsd_to_design` scoring field is a *separate* refold metric in
+the design-campaign tooling — out of scope, untouched.
+
+**Also removed a cross-repo leak.** `preparation/build.py` and `rest2/scaling.py` named the downstream XBL
+campaign ("XBL peptides" / "this project targets") as motivating examples; stripped — a general tool should
+not name a specific consumer campaign.
+
+**Kept deliberately.** Software-sense "design" (this file's "Design decision records", "by design",
+"Design conventions", "density design"); the acknowledgment that the tool was developed for and is often
+run on *designed* structures (CLAUDE.md overview now reads "folded protein structures (designed or
+natural)"); and the dated historical entries below (this is a log — append, don't rewrite).
+
 ## 2026-11-02 — fold-retention metrics: Q + dRMSD + lDDT, alignment-free, vs a topology-matched design
 
 **Decision.** Add three alignment-free drift metrics to `drift_report`, all referenced to the design

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openmm_pipelines"
 version = "0.0.1"
-description = "Pythonic OpenMM engine for explicit-solvent protein MD (plain MD now; T-REMD / REST2 behind the prepare/produce seam)"
+description = "Pythonic OpenMM engine for explicit-solvent protein MD (plain MD, T-REMD, REST2 behind one prepare/produce seam)"
 requires-python = ">=3.10"              # match statements, zip(strict=True)
 dependencies = [
     "openmm>=8.6",
@@ -18,16 +18,16 @@ dependencies = [
     "pandas",                            # production.log parsing for run_report
     "matplotlib",                        # analysis plots
     "pydantic>=2",
+    "openmmtools",                       # T-REMD / REST2 backends; imported eagerly from the top-level package
 ]
 
 [project.optional-dependencies]
-remd = ["openmmtools"]                   # only the REMD / REST2 backends need it
 report = ["plotly"]                       # only the interactive HTML analysis report needs it
 test = ["pytest"]
 
 # NOTE: openmm + pdbfixer are distributed via conda-forge. The intended install is
 #   conda create -n openmm_pipelines -c conda-forge openmm pdbfixer mdtraj
-#   pip install -e .            # (+ '.[remd]' for the replica-exchange backends)
+#   pip install -e .
 
 [tool.setuptools.packages.find]
 include = ["openmm_pipelines*"]

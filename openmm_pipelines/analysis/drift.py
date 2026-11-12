@@ -1,6 +1,6 @@
-"""Drift-from-design report — the shared core of every analysis.
+"""Drift-from-reference report — the shared core of every analysis.
 
-Measured against the design pose: RMSD / Rg / per-residue RMSF / secondary-structure fractions,
+Measured against the reference pose: RMSD / Rg / per-residue RMSF / secondary-structure fractions,
 plus three alignment-free fold-retention metrics — native-contact fraction Q, distance-RMSD, and
 lDDT (one curve per configured atom set, global + per-residue) — and their figures. This is the
 common block between plain MD (`analyze`) and the de-multiplexed REMD ensemble (`analyze_remd`);
@@ -31,11 +31,11 @@ from .metrics import (
 def drift_report(
     traj, reference, native_reference, adir, x, xlabel, rmsd_title, config: AnalysisConfig
 ) -> tuple[dict, dict]:
-    """Compute the drift / fold-retention metrics vs the design, write their PNGs into `adir`, and
+    """Compute the drift / fold-retention metrics vs the reference, write their PNGs into `adir`, and
     return ``(summary, arrays)``.
 
     Two references: `reference` is the raw `input.pdb` pose (Cα-mapped RMSD); `native_reference` is
-    the topology-matched prepared design (`load_prepared_reference`) that the alignment-free metrics
+    the topology-matched prepared reference (`load_prepared_reference`) that the alignment-free metrics
     (native-contact Q, dRMSD, lDDT) need for 1:1 atom correspondence. `x` is the per-frame x-axis
     (production time in ps, or demuxed-frame index) and `xlabel` its label. `summary` is the
     JSON-ready stats block; `arrays` is the raw per-frame data the caller folds into its own ``.npz``.
@@ -46,7 +46,7 @@ def drift_report(
     resseq, rmsf = rmsf_per_residue(traj)
     fractions = ss_fractions(traj)
 
-    plots.plot_timeseries(x, rmsd, "Cα RMSD to design (Å)", adir / "rmsd.png",
+    plots.plot_timeseries(x, rmsd, "Cα RMSD to reference (Å)", adir / "rmsd.png",
                           rmsd_title, xlabel=xlabel)
     plots.plot_timeseries(x, rg, "Rg (Å)", adir / "rg.png",
                           "radius of gyration", xlabel=xlabel)
@@ -56,7 +56,7 @@ def drift_report(
     plots.plot_dssp_timeline(dssp_codes, adir / "dssp_timeline.png")
 
     summary = {
-        "rmsd_to_design_ang": {
+        "rmsd_to_reference_ang": {
             "mean": float(rmsd.mean()), "max": float(rmsd.max()), "final": float(rmsd[-1]),
         },
         "rg_ang": {"mean": float(rg.mean()), "std": float(rg.std())},
@@ -72,7 +72,7 @@ def drift_report(
         **{f"ss_{name}": frac for name, frac in fractions.items()},
     }
 
-    # Alignment-free fold-retention metrics vs the (topology-matched) design pose.
+    # Alignment-free fold-retention metrics vs the (topology-matched) reference pose.
     q = native_contact_fraction(
         traj, native_reference, cutoff_ang=config.q_native_cutoff_ang,
         min_seq_sep=config.q_min_seq_sep, beta_per_nm=config.q_beta_per_nm, lam=config.q_lambda,
@@ -80,8 +80,8 @@ def drift_report(
     drmsd = ca_drmsd(traj, native_reference, selection=config.drmsd_selection)
     plots.plot_timeseries(x, q, "Q (fraction native contacts)", adir / "q.png",
                           "native-contact fraction", xlabel=xlabel, ylim=(0.0, 1.02))
-    plots.plot_timeseries(x, drmsd, "dRMSD to design (Å)", adir / "drmsd.png",
-                          "distance-RMSD to design", xlabel=xlabel)
+    plots.plot_timeseries(x, drmsd, "dRMSD to reference (Å)", adir / "drmsd.png",
+                          "distance-RMSD to reference", xlabel=xlabel)
     summary["q_native_contacts"] = {
         "mean": float(q.mean()), "min": float(q.min()), "final": float(q[-1]),
     }
@@ -100,7 +100,7 @@ def drift_report(
         )
         per_res_mean = per_res.mean(axis=0)
         plots.plot_timeseries(x, glob, f"lDDT ({label})", adir / f"lddt_{atom_set.value}.png",
-                              f"lDDT to design ({label})", xlabel=xlabel, ylim=(0.0, 1.02))
+                              f"lDDT to reference ({label})", xlabel=xlabel, ylim=(0.0, 1.02))
         plots.plot_per_residue(lddt_resseq, per_res_mean, f"mean lDDT ({label})",
                                f"per-residue lDDT ({label})",
                                adir / f"lddt_{atom_set.value}_per_residue.png", ylim=(0.0, 1.02))

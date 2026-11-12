@@ -86,7 +86,7 @@ def _sections(go, summary: dict, arrays: dict, x_key: str, x_label: str) -> list
     sections: list[tuple[str, object]] = []
 
     if "rmsd_ang" in arrays:
-        sections.append(("Cα RMSD to design", _line(go, x, arrays["rmsd_ang"], x_label, "RMSD (Å)")))
+        sections.append(("Cα RMSD to reference", _line(go, x, arrays["rmsd_ang"], x_label, "RMSD (Å)")))
     if "rg_ang" in arrays:
         sections.append(("Radius of gyration", _line(go, x, arrays["rg_ang"], x_label, "Rg (Å)")))
     if "resseq" in arrays and "rmsf_ang" in arrays:
@@ -97,13 +97,13 @@ def _sections(go, summary: dict, arrays: dict, x_key: str, x_label: str) -> list
         sections.append(("Native-contact fraction (Q)",
                          _line(go, x, arrays["q_native_contacts"], x_label, "Q")))
     if "drmsd_ang" in arrays:
-        sections.append(("Distance-RMSD to design",
+        sections.append(("Distance-RMSD to reference",
                          _line(go, x, arrays["drmsd_ang"], x_label, "dRMSD (Å)")))
     lddt = summary.get("lddt")
     if lddt:
         glob = {spec["label"]: arrays[f"lddt_{k}"] for k, spec in lddt.items() if f"lddt_{k}" in arrays}
         if glob:
-            sections.append(("lDDT to design", _multiline(go, x, glob, x_label, "lDDT", yrange=[0, 1])))
+            sections.append(("lDDT to reference", _multiline(go, x, glob, x_label, "lDDT", yrange=[0, 1])))
         if "lddt_resseq" in arrays:
             per = {spec["label"]: arrays[f"lddt_{k}_per_residue"] for k, spec in lddt.items()
                    if f"lddt_{k}_per_residue" in arrays}
@@ -122,11 +122,11 @@ def _sections(go, summary: dict, arrays: dict, x_key: str, x_label: str) -> list
     clustering = summary.get("clustering")
     if clustering and clustering.get("populations"):
         pops = clustering["populations"]
-        design_like = clustering.get("design_like_cluster", -1)
-        colors = ["#2ca02c" if i == design_like else "#4c78a8" for i in range(len(pops))]
+        reference_like = clustering.get("reference_like_cluster", -1)
+        colors = ["#2ca02c" if i == reference_like else "#4c78a8" for i in range(len(pops))]
         figp = go.Figure(go.Bar(x=list(range(len(pops))), y=pops, marker_color=colors))
         figp.update_layout(xaxis_title="cluster (rank by population)", yaxis_title="frames")
-        label = "Cluster populations" + (" (green = design-like basin)" if design_like >= 0 else "")
+        label = "Cluster populations" + (" (green = reference-like basin)" if reference_like >= 0 else "")
         sections.append((label, figp))
     if "cluster_labels" in arrays and "cluster_frame_indices" in arrays:
         xi = x[np.asarray(arrays["cluster_frame_indices"])]
@@ -150,7 +150,7 @@ def _sections(go, summary: dict, arrays: dict, x_key: str, x_label: str) -> list
             sections.append(("Interchain centre-of-mass distance",
                              _multiline(go, x, _relabel(com), x_label, "COM distance (Å)")))
         if per_chain:
-            sections.append(("Per-chain fold retention (RMSD to design)",
+            sections.append(("Per-chain fold retention (RMSD to reference)",
                              _multiline(go, x, {f"chain {c}": v for c, v in per_chain.items()},
                                         x_label, "Cα RMSD (Å)")))
 
@@ -183,9 +183,9 @@ def _metric_rows(summary: dict) -> list[tuple[str, str]]:
     frames = summary.get("n_frames", summary.get("n_frames_demuxed"))
     if frames is not None:
         rows.append(("frames", str(frames)))
-    rmsd = summary.get("rmsd_to_design_ang")
+    rmsd = summary.get("rmsd_to_reference_ang")
     if rmsd:
-        rows.append(("RMSD to design (Å)",
+        rows.append(("RMSD to reference (Å)",
                      f"mean {_fmt(rmsd['mean'])} · max {_fmt(rmsd['max'])} · final {_fmt(rmsd['final'])}"))
     rg = summary.get("rg_ang")
     if rg:
@@ -195,10 +195,10 @@ def _metric_rows(summary: dict) -> list[tuple[str, str]]:
         rows.append(("Q (native contacts)", f"mean {_fmt(q['mean'])} · final {_fmt(q['final'])}"))
     dr = summary.get("drmsd_ang")
     if dr:
-        rows.append(("dRMSD to design (Å)", f"mean {_fmt(dr['mean'])} · max {_fmt(dr['max'])}"))
+        rows.append(("dRMSD to reference (Å)", f"mean {_fmt(dr['mean'])} · max {_fmt(dr['max'])}"))
     lddt = summary.get("lddt")
     if lddt:
-        rows.append(("lDDT to design",
+        rows.append(("lDDT to reference",
                      " · ".join(f"{v['label']} {_fmt(v['mean'])}" for v in lddt.values())))
     ssf = summary.get("ss_fraction_mean")
     if ssf:
@@ -207,8 +207,8 @@ def _metric_rows(summary: dict) -> list[tuple[str, str]]:
     clustering = summary.get("clustering")
     if clustering:
         rows.append(("clusters",
-                     f"{clustering['n_clusters']} · design-like basin "
-                     f"{_fmt(clustering['design_like_fraction'])} of ensemble "
+                     f"{clustering['n_clusters']} · reference-like basin "
+                     f"{_fmt(clustering['reference_like_fraction'])} of ensemble "
                      f"({clustering['method']}, {_fmt(clustering['cutoff_ang'])} Å)"))
     inter = summary.get("interchain")
     if inter:

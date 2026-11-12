@@ -8,10 +8,10 @@ minimum-image-based, so they are correct regardless of how whole molecules were 
 - **interchain contact count** (inter-chain residue pairs within `contact_cutoff_nm`,
   closest-heavy) — interface size / stability.
 - **interchain center-of-mass distance** (minimum-image) — overall chain separation.
-- **per-chain internal RMSD** — each chain's Cα RMSD to the design, fit to that chain alone,
+- **per-chain internal RMSD** — each chain's Cα RMSD to the reference, fit to that chain alone,
   so it reports fold retention independent of docking drift.
 
-Chain correspondence between the trajectory and the design `reference` is **positional**:
+Chain correspondence between the trajectory and the `reference` is **positional**:
 OpenMM prep preserves chain order (PDBFixer edits within chains; `Modeller.addSolvent`
 appends solvent after the protein), and both are stripped to protein-only, so protein chain
 i in the trajectory is protein chain i in the reference. We assert the counts agree and
@@ -103,7 +103,7 @@ def interchain_com_distance(
 def per_chain_rmsd(
     traj: md.Trajectory, reference: md.Trajectory, chain_id: int, selection: str = "name CA"
 ) -> np.ndarray:
-    """Per-frame Cα RMSD (Å) of one chain to the design, fit to THAT chain alone.
+    """Per-frame Cα RMSD (Å) of one chain to the reference, fit to THAT chain alone.
 
     `md.rmsd` aligns using only this chain's atoms and does not mutate `traj`, so the global
     superposition is untouched — this isolates intra-chain fold drift from docking motion.
@@ -157,7 +157,7 @@ def interchain_report(
                       f"interchain contacts (< {config.contact_cutoff_nm} nm)", xlabel)
     plots.plot_series(x, com_dist, "interchain COM distance (Å)",
                       adir / "interchain_com.png", "interchain centre-of-mass distance", xlabel)
-    plots.plot_series(x, per_chain, "Cα RMSD to design (Å)",
+    plots.plot_series(x, per_chain, "Cα RMSD to reference (Å)",
                       adir / "per_chain_rmsd.png", "per-chain fold retention", xlabel)
 
     summary = {"n_protein_chains": len(chains),

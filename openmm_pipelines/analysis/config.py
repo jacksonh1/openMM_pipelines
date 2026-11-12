@@ -27,7 +27,7 @@ class ClusterMethod(str, Enum):
 
 
 class LddtAtomSet(str, Enum):
-    """Atom subset a per-design lDDT curve is computed over. The value is the file/key slug;
+    """Atom subset an lDDT curve is computed over. The value is the file/key slug;
     the human label lives in `metrics._LDDT_SPEC`. Narrower sets suppress fast side-chain motion;
     Cα is the pLDDT-style named standard, all-heavy the canonical all-atom lDDT."""
 
@@ -52,17 +52,17 @@ class AnalysisConfig(BaseModel, frozen=True):
     # fragmenting. Pin an int for reproducibility. See clustering._resolve_min_count.
     cluster_min_samples: int | None = None
 
-    # --- fold-retention vs the design pose (drift report, all alignment-free) ---
+    # --- fold-retention vs the reference pose (drift report, all alignment-free) ---
     # Native-contact fraction Q (Best, Hummer & Eaton, PNAS 2013): all-heavy-atom pairs from
-    # residues >= q_min_seq_sep apart, < q_native_cutoff_ang in the design, softened by a sigmoid.
+    # residues >= q_min_seq_sep apart, < q_native_cutoff_ang in the reference, softened by a sigmoid.
     # Defaults are the paper's all-atom values (beta = 5/Å = 50/nm, lambda = 1.8).
     q_native_cutoff_ang: float = 4.5
     q_min_seq_sep: int = 4          # |i-j| >= this (paper uses |i-j| > 3); excludes trivial local pairs
     q_beta_per_nm: float = 50.0
     q_lambda: float = 1.8
-    # Distance-RMSD to the design (superposition-free continuous analog of RMSD).
+    # Distance-RMSD to the reference (superposition-free continuous analog of RMSD).
     drmsd_selection: str = "name CA"
-    # lDDT to the design (Mariani et al., Bioinformatics 2013), one curve per atom set. Thresholds
+    # lDDT to the reference (Mariani et al., Bioinformatics 2013), one curve per atom set. Thresholds
     # fixed at the GDT-HA set 0.5/1/2/4 Å; whole-system (all local pairs, only same-residue excluded).
     lddt_atom_sets: tuple[LddtAtomSet, ...] = (LddtAtomSet.CA_CB, LddtAtomSet.CA)
     lddt_inclusion_radius_ang: float = 15.0  # R0 (paper default)

@@ -41,20 +41,20 @@ run the suite in `openmm_env` so the solvation/dynamics modules are covered too.
 ## Project overview
 
 **T-REMD**, **REST2** and **plain production MD** — for characterizing
-**designed protein structures** on single-node GPU clusters (SLURM). Developed for the
-Keating lab at MIT; configurable for any cluster via `site_config.sh`.
+**folded protein structures** (designed or natural) on single-node GPU clusters (SLURM).
+Developed for the Keating lab at MIT; configurable for any cluster via `site_config.sh`.
 
-**Every run starts from a folded/designed input structure — never from an unfolded or
+**Every run starts from a folded input structure — never from an unfolded or
 extended state.** The tools serve four objectives:
 
-1. Stability/rigidity characterization of a given starting (designed) structure
+1. Stability/rigidity characterization of a given starting structure
 2. Identifying flexible regions (per-residue)
-3. Variant comparison — run the same protocol on several design variants and see which best retains its designed conformation
+3. Variant comparison — run the same protocol on several structural variants and see which best retains its input conformation
 4. Bound-state sampling — simulate a complex in its bound pose and sample the bound ensemble
 
 **Tool mapping:** plain MD is mainly for **#4** (and optionally #1, #2); T-REMD/REST2 is
 primarily for **#1–3**. Neither is a folding-from-unfolded tool — the input pose is the
-reference the analysis is measured against (RMSD = drift from the design, RMSF = local
+reference the analysis is measured against (RMSD = drift from the reference, RMSF = local
 flexibility).
 
 ### Critical REMD/REST2 concept
@@ -65,7 +65,7 @@ The `.nc` trajectories are NOT fixed-T ensembles. `read_sampler_states(it)` is i
 walker; `read_replica_thermodynamic_states()[it, walker]` is the walker→slot permutation. To
 get a fixed-slot (constant-T / fixed-λ) ensemble you **demux**: per iteration, pick the walker
 occupying the target slot. Only slot 0 (T_min for REMD, λ=1 for REST2) is a real Boltzmann
-sample at the design condition — the only one that feeds RMSD/Rg/RMSF/clustering. See
+sample at the reference condition — the only one that feeds RMSD/Rg/RMSF/clustering. See
 `analysis/multistate.py` (`demux_state`) and its module docstring.
 
 ---
@@ -158,6 +158,6 @@ caused a failure — add its detail to `GOTCHAS.md` immediately AND add a one-li
 - **`storage_directory` offloads raw files to storage via outdir symlinks** — analysis needs the storage fs mounted; a rerun must `RunLayout.clean()` the storage target, not `rm` the outdir symlink (that leaves the real `.nc`/trajectory in storage and re-trips the no-overwrite guard). `offload` writes directly onto storage (not through the symlink), so no EXDEV; it refuses to overwrite an existing output.
 - **MD resume: an appended trajectory silently desyncs from the log unless you truncate to the checkpoint** — write the resume checkpoint on a frame boundary (`checkpoint_steps = checkpoint_every_n_frames * traj_steps`), register the checkpoint reporter BEFORE the trajectory/log reporters, and on resume truncate both `trajectory.xtc` and `production.log` back to the checkpoint step + set `sim.currentStep` before `append=True`. The resume point is a portable State XML written ping-pong to two files (torn-write safe). `md/production.py`.
 - **Multistate resume: reopen the `.nc` with `RunLayout.existing()` + `from_storage`, never `offload`/`create`** — those refuse an existing file; `existing()` resolves the storage symlink (and the real outdir file after a SIGKILL skipped `mirror()`). Build a `MultiStateReporter` on it (`open_mode=None` doesn't truncate), `ReplicaExchangeSampler.from_storage(reporter)`, then `run()` (finish) / `extend(target−current)` (extend), after `configure_global_platform`. `multistate_resume.py`.
-- **PDBFixer silently builds missing TERMINAL residues from SEQRES -> invented extension + huge box** — a sliced/designed input whose SEQRES is longer than its coordinates (e.g. a WW-domain slice with full-construct SEQRES) gets an idealized extended tail: `_assert_no_internal_gaps` only catches INTERNAL gaps, so terminal runs pass and `addMissingAtoms` builds them (a ~40-res domain -> ~143 Å box instead of ~57 Å; floppy tail; large minimization drift; occasional NaN). `build_system` now calls `_drop_missing_residues` after the guard (builds no residues; warns). Detect: compare SEQRES-vs-ATOM residue counts.
-- **`input.pdb` is the RAW pre-prep design — not atom-aligned to the trajectory** — it is copied verbatim before PDBFixer, so it lacks hydrogens, may have PDBFixer-rebuilt atoms, and diverges in atom naming/order (Ile CD1 vs CD) from `prepared/topology.cif` (the trajectory's topology). Per-atom / heavy-atom metrics (native-contact Q, lDDT) that pair atoms by index then read the WRONG atoms silently. Use `load_prepared_reference` (protein slice of `prepared/topology.cif`, 1:1 with the trajectory, geometrically identical to the design) for Q/dRMSD/lDDT; keep `input.pdb` only for Cα RMSD.
+- **PDBFixer silently builds missing TERMINAL residues from SEQRES -> invented extension + huge box** — a sliced or truncated input whose SEQRES is longer than its coordinates (e.g. a WW-domain slice with full-construct SEQRES) gets an idealized extended tail: `_assert_no_internal_gaps` only catches INTERNAL gaps, so terminal runs pass and `addMissingAtoms` builds them (a ~40-res domain -> ~143 Å box instead of ~57 Å; floppy tail; large minimization drift; occasional NaN). `build_system` now calls `_drop_missing_residues` after the guard (builds no residues; warns). Detect: compare SEQRES-vs-ATOM residue counts.
+- **`input.pdb` is the RAW pre-prep input structure — not atom-aligned to the trajectory** — it is copied verbatim before PDBFixer, so it lacks hydrogens, may have PDBFixer-rebuilt atoms, and diverges in atom naming/order (Ile CD1 vs CD) from `prepared/topology.cif` (the trajectory's topology). Per-atom / heavy-atom metrics (native-contact Q, lDDT) that pair atoms by index then read the WRONG atoms silently. Use `load_prepared_reference` (protein slice of `prepared/topology.cif`, 1:1 with the trajectory, geometrically identical to the input structure) for Q/dRMSD/lDDT; keep `input.pdb` only for Cα RMSD.
 - **biotite.structure.lddt counts hydrogens by default** — "by default, also hydrogen atoms are considered"; an all-atom lDDT on a protonated MD frame folds in noisy H distances and diverges from canonical heavy-atom lDDT. Strip H first; the `LddtAtomSet` selections all exclude H (`heavy` = `not element H`), so `lddt_to_reference` never passes hydrogens — keep any new atom set heavy-only.

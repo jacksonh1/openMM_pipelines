@@ -8,12 +8,12 @@ mistake twice.
 
 ---
 
-## `input.pdb` is the RAW pre-prep design — not atom-aligned to the trajectory; per-atom metrics need `load_prepared_reference`
+## `input.pdb` is the RAW pre-prep input structure — not atom-aligned to the trajectory; per-atom metrics need `load_prepared_reference`
 
 **Trigger.** Computing any per-atom / heavy-atom-pair metric (native-contact fraction Q, lDDT) against
 `input.pdb` as the reference.
 
-**What goes wrong.** `prepare.py` copies the user's design to `input.pdb` **verbatim, before** PDBFixer.
+**What goes wrong.** `prepare.py` copies the user's input structure to `input.pdb` **verbatim, before** PDBFixer.
 The simulated system's topology (`prepared/topology.cif`, which the analysis trajectory is loaded with)
 differs from it: hydrogens are added, PDBFixer may rebuild missing side-chain atoms, and atom
 naming/order can diverge (PDB vs force-field conventions, e.g. Ile `CD1` vs `CD`). So atom index *k* in
@@ -25,7 +25,7 @@ maps 1:1 by residue; heavy-atom / per-atom ones are not.
 
 **Fix.** `load_prepared_reference(outdir)` (analysis/trajectory.py) loads the protein slice of
 `prepared/topology.cif` — the **same** origin as the trajectory topology, so 1:1 atom correspondence —
-and its pre-minimization geometry **is** the design (prep moves no existing heavy atom, so native
+and its pre-minimization geometry **is** the input structure (prep moves no existing heavy atom, so native
 contacts / local distances are identical to `input.pdb`). `drift_report` uses it for Q/dRMSD/lDDT; keep
 `input.pdb` (via `load_input_reference`) only for Cα RMSD. Detect a mismatch loudly: `lddt_to_reference`
 asserts `np.array_equal` of the trajectory and reference selection indices.
@@ -371,7 +371,7 @@ except Na⁺/Cl⁻ — an upstream inconsistency, not a conversion error.
 
 **Fix.** The OpenMM port's `a99SBdisp_ions.xml` follows the **GROMACS port** (the lab's REST2-validated
 reference): Na⁺/Cl⁻ are dual-confirmed; K/Rb/Cs/Li/F/I/Mg/Zn/Ca match GROMACS and are documented as
-differing from the Amber leaprc. For neutralisation (Na⁺/Cl⁻ only) there is no ambiguity. If a design
+differing from the Amber leaprc. For neutralisation (Na⁺/Cl⁻ only) there is no ambiguity. If a system
 needs K⁺/Mg²⁺/etc., know you are getting the GROMACS/JC-Merz values, not the leaprc's legacy ones.
 Discovered 2026-10-21 while building the ion xml (`tools/convert_a99sbdisp/make_ions.py`).
 
@@ -431,7 +431,7 @@ resume.
 
 ## PDBFixer silently builds missing TERMINAL residues from SEQRES -> invented extension + huge box
 
-**Trigger.** Preparing a sliced / designed structure whose SEQRES declares more residues than the
+**Trigger.** Preparing a sliced or truncated structure whose SEQRES declares more residues than the
 coordinates contain — e.g. a single-domain slice (a WW domain) still carrying the full-construct
 SEQRES, or any truncated model that kept the parent header.
 

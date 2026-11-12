@@ -9,7 +9,7 @@ those two names; everything substantive lives here.
 The one concept that makes or breaks this analysis: a reporter stores **replica**
 trajectories — continuous coordinate sets that *walk through state space* as exchanges
 swap their thermodynamic state. A single replica's frames are NOT an ensemble at one state;
-they are a mix of every state the replica visited. To measure the design's structural drift
+they are a mix of every state the replica visited. To measure the input structure's drift
 at the reference state you must **de-multiplex**: at each iteration pick the replica
 currently occupying the target state and collect *those* frames. For T-REMD the reference
 is state 0 = T_min; for REST2 it is state 0 = λ=1 (the unscaled, physical ensemble). That
@@ -135,8 +135,8 @@ def analyze_multistate(
 ) -> Path:
     """Exchange/mixing diagnostics + drift metrics + conformational clustering (+ interchain
     metrics for a complex) on the fixed-state ensemble of `config.reference_state` (default 0 =
-    the design-reference rung: T_min for REMD, λ=1 for REST2). That demuxed ensemble is a
-    Boltzmann sample at the design temperature. Writes `outdir/analysis/` (top-level, consistent
+    the reference rung: T_min for REMD, λ=1 for REST2). That demuxed ensemble is a
+    Boltzmann sample at the reference temperature. Writes `outdir/analysis/` (top-level, consistent
     with plain MD; the `.nc` stays under `outdir/<subdir>/`).
     """
     outdir = Path(outdir)
@@ -159,7 +159,7 @@ def analyze_multistate(
         # yet superposed. Demuxed frames are an ensemble ordered by iteration, not a time series.
         traj = to_protein(demux_state(run_dir, nc_name, reference_state))
         reference = load_input_reference(outdir)
-        native_reference = load_prepared_reference(outdir)  # topology-matched design (Q / dRMSD / lDDT)
+        native_reference = load_prepared_reference(outdir)  # topology-matched reference (Q / dRMSD / lDDT)
         frame_index = np.arange(traj.n_frames, dtype=float)
 
         # Interchain metrics first: minimum-image-based, so they need coordinates + box in the
@@ -172,7 +172,7 @@ def analyze_multistate(
                 traj, reference, adir, frame_index, "demuxed frame", config
             )
 
-        # Align to the design pose + origin-center for the viewable ensemble, drift, clustering.
+        # Align to the reference pose + origin-center for the viewable ensemble, drift, clustering.
         superpose_to_reference(traj, reference)
         traj.xyz -= traj.xyz[0].mean(axis=0)  # center frame-0 geometric center at the origin
         traj.save_xtc(str(adir / f"state{reference_state:02d}_ensemble.xtc"))

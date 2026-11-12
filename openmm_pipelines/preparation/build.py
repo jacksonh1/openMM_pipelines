@@ -49,7 +49,7 @@ def _count_disulfides(topology) -> int:
 def _assert_no_internal_gaps(fixer) -> None:
     """Fail loud if the input has an INTERNAL missing-residue gap (chain break).
 
-    A complete designed structure should have no internal chain breaks. An internal gap
+    A complete input structure should have no internal chain breaks. An internal gap
     would make PDBFixer silently rebuild a span AND can make one logical chain read as
     several chains in later multi-chain analysis — so we catch it here, at the boundary,
     rather than guarding for it downstream. Terminal missing residues (at a chain's very
@@ -67,7 +67,7 @@ def _assert_no_internal_gaps(fixer) -> None:
     if internal:
         raise PrepareError(
             f"input has internal missing-residue gap(s) at (chain, position) {internal}; "
-            "a complete design should have no internal chain breaks. Model the missing "
+            "a complete input structure should have no internal chain breaks. Model the missing "
             "residues in the input structure before preparing."
         )
 
@@ -141,7 +141,7 @@ def build_system(cfg: PrepConfig) -> BuiltSystem:
     fixer = PDBFixer(filename=str(cfg.pdb_in))
     ss_before = _count_disulfides(fixer.topology)  # capture the input pose's disulfides
     fixer.findMissingResidues()
-    _assert_no_internal_gaps(fixer)  # GUARD: no internal chain breaks in a designed input
+    _assert_no_internal_gaps(fixer)  # GUARD: no internal chain breaks in the input structure
     # Internal gaps already failed above, so the remaining missing residues are terminal tails;
     # drop them all rather than build an invented extension (simulate the structure as given).
     _drop_missing_residues(fixer)
@@ -150,7 +150,7 @@ def build_system(cfg: PrepConfig) -> BuiltSystem:
     fixer.addMissingHydrogens(cfg.ph)
 
     # GUARD: PDBFixer must not add/remove disulfides — critical for
-    # disulfide-constrained designs (XBL peptides). A changed count means the input
+    # disulfide-constrained inputs. A changed count means the input
     # SG-SG bonding was not preserved.
     ss_after = _count_disulfides(fixer.topology)
     if ss_after != ss_before:

@@ -1,13 +1,13 @@
-"""Conformational clustering for the default-overview analysis, anchored to the design.
+"""Conformational clustering for the default-overview analysis, anchored to the reference pose.
 
-The question this answers for a *designed* structure is conformational heterogeneity: does
-the sampled ensemble stay as one tight cluster near the design pose, or split into several
+The question this answers for a given input structure is conformational heterogeneity: does
+the sampled ensemble stay as one tight cluster near the reference pose, or split into several
 conformations? So alongside cluster populations we report each representative's RMSD to the
-design and the fraction of the ensemble in the design-like basin — the stability /
+reference and the fraction of the ensemble in the reference-like basin — the stability /
 variant-ranking signal.
 
 Three methods (`AnalysisConfig.cluster_method`):
-- **dbscan** (default): sklearn density clustering on the flattened, design-superposed Cα
+- **dbscan** (default): sklearn density clustering on the flattened, reference-superposed Cα
   coordinates, with `eps = cutoff * sqrt(n_atoms)`. Because the input frames are superposed
   to one common reference (the callers do this before clustering), Euclidean distance between
   two flattened frames equals `sqrt(n_atoms) * RMSD`, so the user-facing knob is a genuine Å
@@ -21,7 +21,7 @@ Three methods (`AnalysisConfig.cluster_method`):
   tight state's `eps`. It does NOT use `cluster_cutoff_ang` (there is no single radius); the
   knob is `min_samples` reused as HDBSCAN's `min_cluster_size`. Trade: no fixed physical Å
   cutoff, so the partition adapts per run and is less directly comparable across variants —
-  reach for it when enumerating a single design's true metastable states, not for the
+  reach for it when enumerating a single structure's true metastable states, not for the
   comparable overview.
 - **hierarchical** (opt-in): scipy average-linkage on the OPTIMAL pairwise Cα-RMSD matrix
   (`md.rmsd` re-aligns each pair), cut at `cluster_cutoff_ang`. Interpretable but O(N^2) in
@@ -66,13 +66,13 @@ MAX_HIERARCHICAL_FRAMES = 10_000
 
 @dataclass(frozen=True)
 class ClusterResult:
-    """Outcome of clustering an ensemble, ranked by population and anchored to the design.
+    """Outcome of clustering an ensemble, ranked by population and anchored to the reference pose.
 
     `labels` / `frame_indices` are per CLUSTERED frame (after any striding), aligned to each
     other; `labels` are 0-based ranks by descending population (DBSCAN/HDBSCAN noise kept as
     -1). `frame_indices` index the ORIGINAL trajectory. The per-cluster lists are in rank order
-    and EXCLUDE noise. `design_like_cluster` is the rank whose representative is closest to
-    the design pose; `design_like_fraction` is that cluster's share of the clustered frames.
+    and EXCLUDE noise. `reference_like_cluster` is the rank whose representative is closest to
+    the reference pose; `reference_like_fraction` is that cluster's share of the clustered frames.
     `min_samples` is the resolved density knob — DBSCAN `min_samples` / HDBSCAN
     `min_cluster_size`; None for hierarchical (and the single-frame degenerate case).
     """
@@ -81,9 +81,9 @@ class ClusterResult:
     frame_indices: np.ndarray
     populations: list[int]
     representative_frames: list[int]
-    representative_rmsd_to_design_ang: list[float]
-    design_like_cluster: int
-    design_like_fraction: float
+    representative_rmsd_to_reference_ang: list[float]
+    reference_like_cluster: int
+    reference_like_fraction: float
     n_clusters: int
     n_frames_clustered: int
     cutoff_ang: float
@@ -160,7 +160,7 @@ def _flattened_ca(sub: md.Trajectory, selection: str) -> tuple[np.ndarray, np.nd
 
 
 def _dbscan_labels(sub: md.Trajectory, selection: str, cutoff_ang: float, min_samples: int):
-    """(labels, flattened coords) from DBSCAN on design-superposed Cα coordinates."""
+    """(labels, flattened coords) from DBSCAN on reference-superposed Cα coordinates."""
     idx, coords = _flattened_ca(sub, selection)
     # For frames superposed to one common frame, Euclidean distance = sqrt(n_atoms) * RMSD,
     # so an Å RMSD cutoff maps to eps in nm as below (coords are nm).
@@ -170,7 +170,7 @@ def _dbscan_labels(sub: md.Trajectory, selection: str, cutoff_ang: float, min_sa
 
 
 def _hdbscan_labels(sub: md.Trajectory, selection: str, min_cluster_size: int):
-    """(labels, flattened coords) from HDBSCAN on design-superposed Cα coordinates.
+    """(labels, flattened coords) from HDBSCAN on reference-superposed Cα coordinates.
 
     No `eps`: HDBSCAN extracts each cluster at its own density scale, so `cluster_cutoff_ang`
     is not used here. `min_cluster_size` is the smallest group counted as a state.
@@ -184,9 +184,9 @@ def _hdbscan_labels(sub: md.Trajectory, selection: str, min_cluster_size: int):
 def cluster_conformations(
     traj: md.Trajectory, reference: md.Trajectory, config: AnalysisConfig
 ) -> ClusterResult:
-    """Cluster `traj`'s conformations and anchor the result to the `reference` design pose."""
+    """Cluster `traj`'s conformations and anchor the result to the `reference` pose."""
     assert traj.n_frames >= 1, "need at least 1 frame to cluster"
-    rmsd_to_design = rmsd_to_reference(traj, reference, config.cluster_selection)  # Å, per frame
+    per_frame_rmsd = rmsd_to_reference(traj, reference, config.cluster_selection)  # Å, per frame
 
     sub, frame_indices, stride = _apply_stride(traj, config.cluster_stride)
     m = sub.n_frames
@@ -232,20 +232,20 @@ def cluster_conformations(
 
     representative_frames = [int(frame_indices[p]) for p in rep_positions]
     assert not representative_frames or max(representative_frames) < traj.n_frames
-    representative_rmsd = [float(rmsd_to_design[f]) for f in representative_frames]
+    representative_rmsd = [float(per_frame_rmsd[f]) for f in representative_frames]
 
-    # Design-like basin: the cluster whose representative is closest to the design pose.
-    design_like = int(np.argmin(representative_rmsd)) if representative_rmsd else -1
-    design_like_fraction = (populations[design_like] / m) if design_like >= 0 else 0.0
+    # Reference-like basin: the cluster whose representative is closest to the reference pose.
+    reference_like = int(np.argmin(representative_rmsd)) if representative_rmsd else -1
+    reference_like_fraction = (populations[reference_like] / m) if reference_like >= 0 else 0.0
 
     return ClusterResult(
         labels=ranked,
         frame_indices=frame_indices,
         populations=populations,
         representative_frames=representative_frames,
-        representative_rmsd_to_design_ang=representative_rmsd,
-        design_like_cluster=design_like,
-        design_like_fraction=float(design_like_fraction),
+        representative_rmsd_to_reference_ang=representative_rmsd,
+        reference_like_cluster=reference_like,
+        reference_like_fraction=float(reference_like_fraction),
         n_clusters=len(populations),
         n_frames_clustered=m,
         cutoff_ang=config.cluster_cutoff_ang,
@@ -277,7 +277,7 @@ def cluster_and_report(
     write_representative_pdbs(traj, result, cdir)
     n_noise = int((result.labels == -1).sum())
     plots.plot_cluster_populations(
-        result.populations, cdir / "cluster_populations.png", result.design_like_cluster, n_noise
+        result.populations, cdir / "cluster_populations.png", result.reference_like_cluster, n_noise
     )
     plots.plot_cluster_timeseries(
         np.asarray(x)[result.frame_indices], result.labels,
@@ -300,7 +300,7 @@ def cluster_summary(result: ClusterResult) -> dict:
         "populations": result.populations,
         "population_fractions": [p / m for p in result.populations],
         "representative_frames": result.representative_frames,
-        "representative_rmsd_to_design_ang": result.representative_rmsd_to_design_ang,
-        "design_like_cluster": result.design_like_cluster,
-        "design_like_fraction": result.design_like_fraction,
+        "representative_rmsd_to_reference_ang": result.representative_rmsd_to_reference_ang,
+        "reference_like_cluster": result.reference_like_cluster,
+        "reference_like_fraction": result.reference_like_fraction,
     }

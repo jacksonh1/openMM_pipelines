@@ -35,7 +35,7 @@ def ss_fractions(traj: md.Trajectory) -> dict[str, np.ndarray]:
     """Per-frame fraction of residues in helix / sheet / coil / NA (simplified DSSP).
 
     `NA` is mdtraj's code for residues it cannot assign — chain termini and caps
-    (ACE/NME, common in these designs). It is reported as its own fraction rather
+    (ACE/NME, common in capped structures). It is reported as its own fraction rather
     than folded into coil, so the four fractions sum to 1 and coil is not inflated.
     """
     ss = secondary_structure(traj, simplified=True)

@@ -1,13 +1,13 @@
 """Per-frame / per-residue drift metrics, all in angstroms.
 
-- `rmsd_to_reference` — backbone-Cα RMSD of each frame to the **input design pose**
+- `rmsd_to_reference` — backbone-Cα RMSD of each frame to the **input pose**
   (the reference), mapping Cα across the two topologies explicitly (the trajectory
   carries hydrogens the input PDB may not).
 - `radius_of_gyration` — protein Rg per frame.
 - `rmsf_per_residue` — Cα fluctuation about the trajectory mean (intrinsic
   flexibility; does not need the external reference).
 
-Three **alignment-free** fold-retention metrics vs the design pose (`native_reference`, which
+Three **alignment-free** fold-retention metrics vs the reference pose (`native_reference`, which
 must share the trajectory's atom layout — use `trajectory.load_prepared_reference`):
 
 - `native_contact_fraction` — Q (Best, Hummer & Eaton, PNAS 2013): soft fraction of native
@@ -73,14 +73,14 @@ def rmsf_per_residue(
     return resseq, rmsf_nm * _NM_TO_ANG
 
 
-# --- alignment-free fold-retention vs the design pose ---------------------------------------
+# --- alignment-free fold-retention vs the reference pose ------------------------------------
 # `native_reference` must share `traj`'s atom layout (same topology.cif origin); these ASSUME it.
 
 
 def _native_contact_pairs(
     reference: md.Trajectory, cutoff_nm: float, min_seq_sep: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Heavy-atom native contacts of the design: ``(pairs (n, 2) atom indices, r0 (n,) nm)``.
+    """Heavy-atom native contacts of the reference: ``(pairs (n, 2) atom indices, r0 (n,) nm)``.
 
     A native contact is a pair of heavy atoms from residues at least `min_seq_sep` apart in
     sequence (ordinal) whose distance in `reference` frame 0 is below `cutoff_nm`.
@@ -107,7 +107,7 @@ def native_contact_fraction(
 ) -> np.ndarray:
     """Per-frame fraction of native contacts Q (Best, Hummer & Eaton, PNAS 2013).
 
-    Native contacts are fixed on `native_reference` (the design): all-heavy-atom pairs from
+    Native contacts are fixed on `native_reference` (the reference): all-heavy-atom pairs from
     residues ``>= min_seq_sep`` apart in sequence within `cutoff_ang`. Each contact's on/off is
     softened by the sigmoid ``1 / (1 + exp[beta (r - lam r0)])`` so Q is smooth and tolerant of
     thermal breathing; the defaults are the paper's all-atom values (beta = 5/Å = 50/nm,
@@ -125,7 +125,7 @@ def native_contact_fraction(
 def ca_drmsd(
     traj: md.Trajectory, native_reference: md.Trajectory, *, selection: str = "name CA"
 ) -> np.ndarray:
-    """Per-frame distance-RMSD (Å) to the design: ``sqrt(mean_{i<j} (d_ij - d_ij^0)^2)`` over all
+    """Per-frame distance-RMSD (Å) to the reference: ``sqrt(mean_{i<j} (d_ij - d_ij^0)^2)`` over all
     `selection` pairs. Superposition-free (internal distances only), continuous, unbounded."""
     t_idx = traj.topology.select(selection)
     r_idx = native_reference.topology.select(selection)
@@ -160,7 +160,7 @@ def lddt_to_reference(
     *,
     inclusion_radius_ang: float = 15.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per-frame lDDT (Mariani et al., Bioinformatics 2013) of `traj` to the design over atoms
+    """Per-frame lDDT (Mariani et al., Bioinformatics 2013) of `traj` to the reference over atoms
     matching `selection`, via `biotite.structure.lddt`.
 
     Whole-system (all local pairs within `inclusion_radius_ang`, only same-residue pairs excluded);

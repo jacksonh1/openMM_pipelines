@@ -8,7 +8,7 @@
 ## What this package is
 
 A small, Pythonic OpenMM engine for **explicit-solvent protein MD**. Given a
-folded/designed input PDB, it runs the standard flow — structure prep + solvation,
+folded input PDB, it runs the standard flow — structure prep + solvation,
 energy minimization, equilibration (NVT then NPT density), production — and the
 analysis measures how far the structure drifts from the **input pose** (RMSD =
 drift from input, RMSF = local flexibility). It never folds from an unfolded
@@ -102,18 +102,18 @@ openmm_pipelines/
     config.py              #   AnalysisConfig (pure pydantic) — all analysis knobs, serialized to report
     trajectory.py          #   load (cif topo via openmm) + image_molecules + strip + superpose to input;
                            #     load_input_reference (raw input.pdb, Cα RMSD) + load_prepared_reference
-                           #     (prepared/topology.cif protein slice: topology-matched design for Q/lDDT)
+                           #     (prepared/topology.cif protein slice: topology-matched reference for Q/lDDT)
     metrics.py             #   rmsd_to_reference / radius_of_gyration / rmsf_per_residue; alignment-free
                            #     native_contact_fraction (Q, BHE) / ca_drmsd / lddt_to_reference (biotite);
                            #     LDDT_SPEC = LddtAtomSet -> (selection, label)  (Å)
     dssp.py                #   secondary_structure, ss_fractions, dssp_timeline (per-residue SS map)
     clustering.py          #   ClusterResult; cluster_conformations (DBSCAN default + HDBSCAN + hierarchical;
-                           #     adaptive min_samples, cluster_stride); representatives + populations + design-anchored
+                           #     adaptive min_samples, cluster_stride); representatives + populations + reference-anchored
     interchain.py          #   min-image interchain min-dist/contacts/COM + per-chain RMSD; auto at >=2 chains
     plots.py               #   rmsd/rg/rmsf/dssp/dssp_timeline/cluster/interchain + q/drmsd/lddt(+per-residue)
                            #     PNGs at 300 dpi (matplotlib Agg); plot_per_residue generalizes plot_rmsf
     report.py              #   write_html_report: self-contained interactive Plotly report.html ([report] extra)
-    drift.py               #   drift_report: RMSD/Rg/RMSF/SS + Q/dRMSD/lDDT + plots vs design pose,
+    drift.py               #   drift_report: RMSD/Rg/RMSF/SS + Q/dRMSD/lDDT + plots vs reference pose,
                            #     shared primitive used by analyze + analyze_multistate    [BUILT]
     multistate.py          #   [BUILT] shared REMD/REST2 core: exchange/mixing diagnostics
                            #     (openmmtools analyzer) + de-multiplex a fixed-state ensemble (needs [remd])
@@ -170,7 +170,7 @@ equilibration is already engine-agnostic.
 | NVT equilibration (restrained) | `setVelocitiesToTemperature` + Langevin steps | prepare |
 | NPT density equil (restrained, adaptive plateau) | `MonteCarloBarostat` + segment loop | prepare |
 | restraint release (+ optional unrestrained NPT relax) | `context.setParameter("k", 0)` | prepare |
-| production (NPT or NVT) | MD: `Simulation.step()`; REMD/REST2: `multistate` | **produce** |
+| production | MD: `Simulation.step()` (**NPT** — barostat kept); REMD/REST2: `multistate` (**NVT** — barostat stripped) | **produce** |
 | export + analysis | `PDBFile` + `mdtraj` PBC wrap; in-package `mdtraj` analysis | produce |
 
 Restraints are held at full strength through the **entire** equilibration and

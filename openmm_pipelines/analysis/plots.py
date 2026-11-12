@@ -90,8 +90,8 @@ def plot_series(x, series, ylabel, path, title, xlabel="time (ps)"):
     return _save(fig, path)
 
 
-def plot_cluster_populations(populations, path, design_like_cluster=-1, n_noise=0):
-    """Cluster sizes (rank-ordered, descending) with percent labels; highlight the design-like
+def plot_cluster_populations(populations, path, reference_like_cluster=-1, n_noise=0):
+    """Cluster sizes (rank-ordered, descending) with percent labels; highlight the reference-like
     cluster and show the DBSCAN/HDBSCAN noise bar last. Percentages are of all clustered frames
     (incl. noise), matching the report JSON. One dominant bar near rank 0 = a stable ensemble."""
     pops = np.asarray(populations, dtype=float)
@@ -99,7 +99,7 @@ def plot_cluster_populations(populations, path, design_like_cluster=-1, n_noise=
     xs = list(range(len(pops)))
     heights = list(pops)
     xticklabels = [str(r) for r in xs]
-    colors = ["tab:green" if r == design_like_cluster else "tab:blue" for r in xs]
+    colors = ["tab:green" if r == reference_like_cluster else "tab:blue" for r in xs]
     if n_noise:  # DBSCAN/HDBSCAN diffuse tail — shown but not a conformation
         xs.append(len(pops))
         heights.append(float(n_noise))
@@ -114,7 +114,7 @@ def plot_cluster_populations(populations, path, design_like_cluster=-1, n_noise=
     ax.set_xticks(xs)
     ax.set_xticklabels(xticklabels)
     ax.set_title("conformational cluster populations"
-                 + (" (green = design-like)" if design_like_cluster >= 0 else ""))
+                 + (" (green = reference-like)" if reference_like_cluster >= 0 else ""))
     return _save(fig, path)
 
 

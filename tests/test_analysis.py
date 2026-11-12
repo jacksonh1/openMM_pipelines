@@ -144,7 +144,7 @@ def test_native_contact_fraction_is_one_at_reference_and_breaks_when_expanded():
     from openmm_pipelines.analysis.metrics import native_contact_fraction
 
     ref = _structure()
-    q = native_contact_fraction(ref, ref)  # frame == design
+    q = native_contact_fraction(ref, ref)  # frame == reference
     assert q.shape == (1,)
     assert q[0] > 0.99  # soft sigmoid at r == r0 -> ~1 (not exactly 1)
     blown_up = md.Trajectory(ref.xyz * 2.5, ref.topology)  # 2.5x > lambda=1.8 -> contacts broken
@@ -193,7 +193,7 @@ def test_lddt_fails_loud_on_mismatched_atom_layout():
         lddt_to_reference(sliced, ref, "name CA")
 
 
-def test_dbscan_is_default_clusters_all_frames_and_tags_design_like():
+def test_dbscan_is_default_clusters_all_frames_and_tags_reference_like():
     traj = _two_blob_traj(per=12)  # 24 frames, reference = blob A
     res = cluster_conformations(
         traj, traj[0], AnalysisConfig(cluster_cutoff_ang=3.0, cluster_min_samples=3))
@@ -203,9 +203,9 @@ def test_dbscan_is_default_clusters_all_frames_and_tags_design_like():
     assert res.n_clusters == 2
     assert sorted(res.populations) == [12, 12]
     assert res.labels.shape == (traj.n_frames,)
-    # the design-like cluster's representative is the blob-A basin (near the reference)
-    assert res.representative_rmsd_to_design_ang[res.design_like_cluster] < 1.0
-    assert res.design_like_fraction == pytest.approx(0.5)
+    # the reference-like cluster's representative is the blob-A basin (near the reference)
+    assert res.representative_rmsd_to_reference_ang[res.reference_like_cluster] < 1.0
+    assert res.reference_like_fraction == pytest.approx(0.5)
 
 
 def test_adaptive_min_samples_sends_sparse_tail_to_noise():
@@ -236,8 +236,8 @@ def test_hierarchical_is_opt_in_and_splits_two_states():
     assert res.method == "hierarchical"
     assert res.n_clusters == 2
     assert sorted(res.populations) == [3, 3]
-    assert res.design_like_fraction == pytest.approx(0.5)
-    assert res.representative_rmsd_to_design_ang[res.design_like_cluster] < 1.0
+    assert res.reference_like_fraction == pytest.approx(0.5)
+    assert res.representative_rmsd_to_reference_ang[res.reference_like_cluster] < 1.0
 
 
 def test_hierarchical_too_many_frames_fails_loudly():
@@ -309,11 +309,11 @@ def test_html_report_is_self_contained(tmp_path):
 
     summary = {
         "n_frames": 10,
-        "rmsd_to_design_ang": {"mean": 1.2, "max": 2.3, "final": 1.5},
+        "rmsd_to_reference_ang": {"mean": 1.2, "max": 2.3, "final": 1.5},
         "rg_ang": {"mean": 12.0, "std": 0.3},
         "ss_fraction_mean": {"helix": 0.6, "sheet": 0.1, "coil": 0.3, "na": 0.0},
-        "clustering": {"n_clusters": 2, "design_like_fraction": 0.6, "method": "hierarchical",
-                       "cutoff_ang": 2.0, "populations": [6, 4], "design_like_cluster": 0},
+        "clustering": {"n_clusters": 2, "reference_like_fraction": 0.6, "method": "hierarchical",
+                       "cutoff_ang": 2.0, "populations": [6, 4], "reference_like_cluster": 0},
     }
     arrays = {
         "time_ps": np.arange(10, dtype=float),
@@ -328,7 +328,7 @@ def test_html_report_is_self_contained(tmp_path):
     path = write_html_report(tmp_path, summary, arrays, "time_ps", "time (ps)", "demo-run")
     text = path.read_text()
     assert path.name == "report.html"
-    assert "demo-run" in text and "RMSD to design" in text
+    assert "demo-run" in text and "RMSD to reference" in text
     assert "Secondary structure per residue" in text  # DSSP heatmap section
     assert "<script" in text and "Plotly" in text  # plotly.js embedded -> self-contained, offline
 

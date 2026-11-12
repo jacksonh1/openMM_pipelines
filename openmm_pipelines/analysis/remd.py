@@ -2,7 +2,7 @@
 
 The substance (exchange diagnostics, de-multiplex into a fixed-temperature ensemble, drift
 metrics) is shared with REST2 in `analysis/multistate.py`; here we only fix `remd/` +
-`remd.nc` and the default reference state 0 (= T_min, the design temperature). See that
+`remd.nc` and the default reference state 0 (= T_min, the reference temperature). See that
 module's docstring for the de-multiplex concept.
 
 Reads only; never mutates the run. Requires the `[remd]` extra (openmmtools).

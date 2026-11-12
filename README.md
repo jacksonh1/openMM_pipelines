@@ -86,7 +86,7 @@ cfg = MDConfig(
 
 eq = prepare(cfg)               # build + solvate + minimize + equilibrate (shared by all engines)
 md.run(eq, cfg)                 # production
-analysis.analyze(cfg.outdir)    # RMSD/Rg/RMSF/DSSP + Q/dRMSD/lDDT + clustering vs the design pose
+analysis.analyze(cfg.outdir)    # RMSD/Rg/RMSF/DSSP + Q/dRMSD/lDDT + clustering vs the reference pose
 ```
 
 One-shot: `md.run(prepare(cfg), cfg)`. `prepare()` also serializes the equilibrated system
@@ -101,7 +101,7 @@ from openmm_pipelines.analysis.remd import analyze_remd
 
 cfg = REMDConfig(
     pdb_in="structure.pdb", outdir="run_remd",
-    temperature_k=300.0,            # T_min = reference / design temperature (ladder minimum)
+    temperature_k=300.0,            # T_min = reference temperature (ladder minimum)
     max_temperature_k=400.0,
     n_replicas=12,                  # geometric ladder from min/max/n; or pin temperatures_k=(...)
     total_ns=20.0,                  # MD time collected per replica
@@ -109,7 +109,7 @@ cfg = REMDConfig(
     platform="CUDA",
 )
 remd.run(prepare(cfg), cfg)
-analyze_remd(cfg.outdir, reference_state=0)   # state 0 = T_min, the Boltzmann sample at design T
+analyze_remd(cfg.outdir, reference_state=0)   # state 0 = T_min, the Boltzmann sample at the reference temperature
 ```
 
 ### REST2
@@ -219,7 +219,7 @@ prepare(cfg) ──────────────────────�
                                               ▼         ▼         ▼
                                         md.run     remd.run   rest2.run
                                         plain MD   T ladder   λ-scaled solute
-                                        (NPT/NVT)  (NVT)      (NVT, all at T_0)
+                                        (NPT)      (NVT)      (NVT, all at T_0)
 ```
 
 Restraints release only at the **start of production**, so the trajectory captures drift
@@ -265,7 +265,7 @@ outdir/
   run_info.resume.<utc>.json, production|remd|rest2/run_report.resume.<utc>.json   # per-resume-segment provenance + QC
 ```
 
-The `analysis/` folder holds the computed metrics, all measured against the design pose:
+The `analysis/` folder holds the computed metrics, all measured against the reference pose:
 `analysis_report.json` (RMSD drift, radius of gyration, per-residue RMSF, secondary-structure
 fractions, native-contact fraction Q, distance-RMSD, lDDT, conformational-cluster count), the
 matching 300 dpi PNG plots, `analysis_data.npz` with the raw arrays, and an interactive
@@ -287,7 +287,7 @@ you (see `analysis/multistate.py`, `demux_state`).
 
 `analyze(outdir)` (plain MD) / `analyze_remd(outdir)` / `analyze_rest2(outdir)` write
 `outdir/analysis/`: metric PNGs (300 dpi), `analysis_report.json`, `analysis_data.npz`, and an
-interactive `report.html`. All metrics are measured against the **design pose**.
+interactive `report.html`. All metrics are measured against the **reference pose**.
 
 Pass an `AnalysisConfig` to pin every parameter — it is serialized into the report, so a run is
 reproducible from its own JSON (don't rely on defaults in a campaign):
@@ -296,7 +296,7 @@ reproducible from its own JSON (don't rely on defaults in a campaign):
 from openmm_pipelines.analysis import analyze, AnalysisConfig, ClusterMethod, LddtAtomSet
 
 analyze(cfg.outdir, AnalysisConfig(
-    # fold-retention vs the design (all alignment-free):
+    # fold-retention vs the reference (all alignment-free):
     q_native_cutoff_ang=4.5, q_min_seq_sep=4, q_beta_per_nm=50.0, q_lambda=1.8,  # native-contact Q (BHE)
     drmsd_selection="name CA",                                                    # Cα distance-RMSD
     lddt_atom_sets=(LddtAtomSet.CA_CB, LddtAtomSet.CA),                           # one lDDT curve per set
@@ -312,11 +312,11 @@ analyze(cfg.outdir, AnalysisConfig(
 ))
 ```
 
-**Metrics vs the design** (RMSD = backbone drift, needs superposition; the rest are
+**Metrics vs the reference** (RMSD = backbone drift, needs superposition; the rest are
 alignment-free): `rmsd` · `rg` · `rmsf` (per-residue) · `dssp` + `dssp_timeline` · **`q`**
 (fraction of native contacts, Best–Hummer–Eaton soft cutoff) · **`drmsd`** (distance-RMSD) ·
 **`lddt_<set>`** + **`lddt_<set>_per_residue`** (Mariani lDDT; `<set>` ∈ `ca_cb`/`ca`/`backbone`/
-`heavy`, labeled e.g. "lDDT (Cα+Cβ)"). `q`/lDDT are in [0,1]; higher = closer to the design.
+`heavy`, labeled e.g. "lDDT (Cα+Cβ)"). `q`/lDDT are in [0,1]; higher = closer to the reference.
 
 **lDDT is whole-system:** it scores every local atom pair within the 15 Å inclusion radius —
 **both intra-chain (fold) and inter-chain (interface) pairs** (only same-residue pairs are

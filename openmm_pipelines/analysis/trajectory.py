@@ -1,6 +1,6 @@
 """Load and condition a production trajectory for analysis.
 
-Everything measures drift from the **input pose** (the design), so the flow is: load
+Everything measures drift from the **input pose** (the reference), so the flow is: load
 the raw trajectory, image molecules whole across PBC, strip to protein, and superpose
 onto the input structure. The topology is parsed from the mmCIF via OpenMM (mdtraj's
 own CIF support is unreliable) and converted to an mdtraj topology.
@@ -49,22 +49,22 @@ def to_protein(traj: md.Trajectory) -> md.Trajectory:
 
 
 def load_input_reference(outdir) -> md.Trajectory:
-    """The design pose: `input.pdb`, protein atoms only (single frame reference)."""
+    """The reference pose: `input.pdb`, protein atoms only (single frame reference)."""
     ref = md.load(str(Path(outdir) / "input.pdb"))
     return to_protein(ref)
 
 
 def load_prepared_reference(outdir) -> md.Trajectory:
-    """The design pose carrying the TRAJECTORY's exact atom layout: the protein slice of
+    """The reference pose carrying the TRAJECTORY's exact atom layout: the protein slice of
     `prepared/topology.cif` (single frame).
 
     `load_input_reference` reads the raw `input.pdb`, whose topology differs from the simulated
     system (no hydrogens, PDB atom naming), so it is usable only through a Cα mapping. This loader
     instead builds from `prepared/topology.cif` — the same file the analysis trajectory's topology
     comes from — so every atom maps 1:1 to the trajectory. That is what the per-atom and
-    heavy-atom-pair metrics (native-contact Q, lDDT) need. Its internal geometry is the design:
-    prep adds hydrogens and rebuilds only missing atoms, never moving an existing heavy atom, so
-    the native contacts / local distances are the designed pose's (identical to `input.pdb`).
+    heavy-atom-pair metrics (native-contact Q, lDDT) need. Its internal geometry is the input
+    structure's: prep adds hydrogens and rebuilds only missing atoms, never moving an existing heavy
+    atom, so the native contacts / local distances are the input structure's (identical to `input.pdb`).
     """
     cif = Path(outdir) / "prepared" / "topology.cif"
     assert cif.exists(), f"no prepared topology at {cif} — run prepare() first"

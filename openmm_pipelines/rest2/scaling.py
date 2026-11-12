@@ -163,9 +163,8 @@ def _scale_periodic_torsion(force: PeriodicTorsionForce, solute, lam: float) -> 
     is not implemented here. This pipeline only ever tempers whole molecules (whole protein
     or a whole chain), for which no covalent torsion crosses the boundary. A straddling
     torsion therefore means the selection cut a covalent chain mid-molecule — a sub-chain
-    selection, or an inter-chain disulfide linking the hot chain to a cold one (relevant for
-    the disulfide-constrained designs this project targets). Refuse, rather than silently
-    leaving the boundary torsion at full strength.
+    selection, or an inter-chain disulfide linking the hot chain to a cold one. Refuse, rather
+    than silently leaving the boundary torsion at full strength.
     """
     for i in range(force.getNumTorsions()):
         p1, p2, p3, p4, periodicity, phase, k = force.getTorsionParameters(i)

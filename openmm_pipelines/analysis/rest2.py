@@ -3,7 +3,7 @@
 The substance (exchange diagnostics, de-multiplex, drift metrics) is shared with T-REMD in
 `analysis/multistate.py`; here we only fix `rest2/` + `rest2.nc` and the default reference
 state 0 (= λ=1, the unscaled physical ensemble — the one REST2 ensemble that is a real
-Boltzmann sample at the design temperature). See that module's docstring for the demux.
+Boltzmann sample at the reference temperature). See that module's docstring for the demux.
 
 Reads only; never mutates the run. Requires the `[remd]` extra (openmmtools).
 """

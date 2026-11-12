@@ -5,7 +5,7 @@ scientific run. Needs the `[remd]` extra (openmmtools).
 
 The point to notice: a replica trajectory walks THROUGH temperature space, so the
 analysis de-multiplexes the reference rung (state 0 = T_min) into a fixed-temperature
-ensemble before measuring drift from the design pose. See `replica_walk.png`.
+ensemble before measuring drift from the reference pose. See `replica_walk.png`.
 """
 
 from pathlib import Path
@@ -33,7 +33,7 @@ def main() -> None:
         density_max_seg=12,
         density_tol_rel=0.02,
         # ladder + short REMD (NVT production)
-        temperature_k=300.0,  # T_min = reference / design temperature
+        temperature_k=300.0,  # T_min = reference temperature
         max_temperature_k=360.0,
         # Explicit-solvent T-REMD needs neighbour gaps small enough for the replicas'
         # potential-energy histograms to OVERLAP: adjacent acceptance ~ exp(-(Δβ·σ_E)²/2)

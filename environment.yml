@@ -32,6 +32,7 @@ dependencies:
   - pytables
   - pyyaml
   - matplotlib-base
+  - seaborn              # categorical distribution plots (boxen/strip) in analyses
   - plotly               # interactive HTML analysis report
   # ── Config + tests ──────────────────────────────────────────────────
   - pydantic>=2
