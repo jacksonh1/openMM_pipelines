@@ -14,6 +14,7 @@ from . import analysis, md, remd, rest2
 from .config import BoxShape, PrepConfig
 from .forcefield import ForceFieldError, NonbondedSpec, ProteinFF, WaterModel, resolve
 from .md.config import MDConfig
+from .lifecycle import is_complete, run_or_resume
 from .preparation import EquilibratedSystem, prepare
 from .resume import resume
 
@@ -30,6 +31,8 @@ __all__ = [
     "prepare",
     "EquilibratedSystem",
     "resume",
+    "run_or_resume",  # idempotent fresh-vs-continue-vs-done entrypoint for requeued SLURM jobs
+    "is_complete",
     # engine subpackages (each exports its own Config + run/resume)
     "md",
     "remd",

@@ -6,9 +6,8 @@ replica exchange), and **REST2** (replica exchange with solute tempering) — al
 one shared *prepare → produce* seam. It is system-agnostic: anything OpenMM can parameterize
 from a folded PDB works.
 
-Every run starts from a **folded input structure**, never from an unfolded or extended state.
 The input pose is the reference every analysis metric is measured against (RMSD is drift from
-it, RMSF is local flexibility). This is a characterization tool, not a folding tool.
+it, RMSF is local flexibility).
 
 ---
 
@@ -26,20 +25,13 @@ it, RMSF is local flexibility). This is a characterization tool, not a folding t
 
 ## Install
 
-The package has its **own isolated conda env, `openmm_env`** — do not use the sibling
-repos' envs.
+The package has its **own isolated conda env, `openmm_env`**
 
 ```bash
 conda env create -f environment.yml     # creates openmm_env (openmm 8.6, openmmtools, mdtraj, …)
 conda activate openmm_env
 pip install -e .                         # editable install (done by environment.yml's pip section)
 ```
-
-- `openmm` + `pdbfixer` ship from **conda-forge** (not pip).
-- `openmmtools` powers the T-REMD / REST2 backends; it's the optional `[remd]` extra for a
-  pip-only install but is already in `environment.yml`.
-- Core OpenMM bundles every protein force field used here — **no `openmmforcefields`
-  dependency**.
 
 Makefile shortcuts: `make create_environment`, `make requirements`, `make test`, `make format`.
 
@@ -108,8 +100,9 @@ cfg = REMDConfig(
     exchange_attempt_ps=1.0,        # swap attempt every 1 ps
     platform="CUDA",
 )
-remd.run(prepare(cfg), cfg)
-analyze_remd(cfg.outdir, reference_state=0)   # state 0 = T_min, the Boltzmann sample at the reference temperature
+eq = prepare(cfg)
+remd.run(eq, cfg)
+analyze_remd(cfg.outdir)   # demuxes state 0 = T_min (the Boltzmann sample at the reference T) by default; pin another rung via AnalysisConfig(reference_state=...)
 ```
 
 ### REST2
@@ -129,8 +122,9 @@ cfg = REST2Config(
     exchange_attempt_ps=1.0,
     platform="CUDA",
 )
-rest2.run(prepare(cfg), cfg)
-analyze_rest2(cfg.outdir, reference_state=0)  # state 0 = λ=1, the unscaled physical ensemble
+eq = prepare(cfg)
+rest2.run(eq, cfg)
+analyze_rest2(cfg.outdir)  # demuxes state 0 = λ=1 (the unscaled physical ensemble) by default; pin another rung via AnalysisConfig(reference_state=...)
 ```
 
 Each engine exposes the **same signature** — `run(eq, cfg) -> Path` — and `MDConfig` /
@@ -186,12 +180,8 @@ valid but not bit-identical to an uninterrupted one (the RNG stream is not carri
 restart — GPU runs are not bit-reproducible regardless). Each resumed segment writes its own
 `run_info.resume.<utc>.json` + `run_report.resume.<utc>.json`.
 
-**Key defaults** you inherit if you don't set them (full list + units in the config classes):
-`ph=7.4`, `box_shape=dodecahedron`, `padding_nm=1.0`, `ionic_strength_molar=0.15`,
-`neutralize=True`, `temperature_k=300`, `dt_ps=0.004` (4 fs, needs the default HMR
-`hydrogen_mass_amu=4.0`; for 2 fs set `hydrogen_mass_amu=1.008, dt_ps=0.002`),
-`friction_ps=1.0`, `restraint_k=1000` (kJ/mol/nm² on protein heavy atoms during
-equilibration), `nvt_equil_ns=0.2`. Plain MD adds `total_ns=100`, `traj_ps=10`.
+One non-obvious coupling among the defaults: `dt_ps=0.004` (4 fs) requires HMR
+(`hydrogen_mass_amu=4.0`, on by default); for 2 fs set `hydrogen_mass_amu=1.008, dt_ps=0.002`.
 
 ### Choosing a replica ladder (T-REMD / REST2)
 
@@ -222,17 +212,17 @@ prepare(cfg) ──────────────────────�
                                         (NPT)      (NVT)      (NVT, all at T_0)
 ```
 
-Restraints release only at the **start of production**, so the trajectory captures drift
-from the input pose, not drift accumulated during equilibration. Density equilibration uses
-an adaptive plateau (least-squares slope) test rather than a consecutive-segment difference.
+Restraints are released at the **end of equilibration** (baked to zero in the handoff), so
+production starts unrestrained and the trajectory captures drift from the input pose, not
+drift accumulated during equilibration. Density equilibration uses an adaptive plateau
+(least-squares slope) test rather than a consecutive-segment difference.
 
 ---
 
 ## Force fields & water
 
-Pick both deliberately and **pin them** — defaults can change as the codebase evolves. A
-single `resolve()` enforces legal FF/water pairings (and warns on degraded ones like
-ff19SB+TIP3P).
+Pick both deliberately and **pin them**. A single `resolve()` enforces every FF/water
+pairing in one place: an illegal pair **raises**, a free-but-degraded pair **warns**.
 
 **Protein** (`ProteinFF`): `AMBER99SBILDN`, `AMBER14SB`, `AMBER19SB` (QM-trained, pairs with
 OPC), `CHARMM36`, `CHARMM36M` (Huang-2017 CMAP; distinct from CHARMM36).
@@ -240,8 +230,9 @@ OPC), `CHARMM36`, `CHARMM36M` (Huang-2017 CMAP; distinct from CHARMM36).
 **Water** (`WaterModel`): `TIP3P`, `SPCE`, `TIP3PFB`, `OPC3` (3-site); `TIP4PEW`, `TIP4PFB`,
 `OPC` (4-site). Packing box is chosen by **site count**; parameters come from the FF xml.
 
-Pairings `resolve()` recommends (warns otherwise): AMBER14SB→TIP3P, AMBER19SB→OPC,
-CHARMM36/36M→(CHARMM) TIP3P.
+Required (mismatch **raises**): AMBER19SB→OPC (ff19SB was fit for OPC); CHARMM36/36M→their
+bundled CHARMM-modified TIP3P (never an AMBER-tree water). Recommended (mismatch **warns**):
+AMBER14SB→TIP3P, AMBER99SBILDN→TIP3P.
 
 > **Note:** REST2 solute scaling currently supports **AMBER + CMAP** only; CHARMM36m's
 > `CustomNonbonded`/`CustomBond`/`CustomTorsion` forces are refused (not silently mishandled).
@@ -265,29 +256,26 @@ outdir/
   run_info.resume.<utc>.json, production|remd|rest2/run_report.resume.<utc>.json   # per-resume-segment provenance + QC
 ```
 
-The `analysis/` folder holds the computed metrics, all measured against the reference pose:
-`analysis_report.json` (RMSD drift, radius of gyration, per-residue RMSF, secondary-structure
-fractions, native-contact fraction Q, distance-RMSD, lDDT, conformational-cluster count), the
-matching 300 dpi PNG plots, `analysis_data.npz` with the raw arrays, and an interactive
-`report.html`. See **Analysis** below for the knobs; `analyze` also runs it automatically.
+The `analysis/` folder holds the computed metrics, their 300 dpi PNG plots, the raw arrays
+(`.npz`), and an interactive `report.html`. Plain MD writes bare names (`analysis_report.json`,
+`analysis_data.npz`); REMD/REST2 prefix them `remd_`/`rest2_`. See **Analysis** below.
 
 ### REMD/REST2 demultiplexing
 
-openmmtools stores **walkers** (it calls them "replicas") — continuous coordinate sets that
-move *through* state space as swaps reassign their thermodynamic state. The `.nc` trajectories
-are **not** fixed-temperature ensembles. To get a constant-T (REMD) or fixed-λ (REST2)
-ensemble you **demux**: per iteration, pick the walker occupying the target slot. Only slot 0
-(T_min for REMD, λ=1 for REST2) is a real Boltzmann sample at the reference condition — the
-only one that feeds the drift metrics / clustering. `analyze_remd` / `analyze_rest2` do this for
-you (see `analysis/multistate.py`, `demux_state`).
+The `.nc` files store **walkers** (openmmtools calls them "replicas"), not fixed-temperature
+ensembles: each walker moves *through* state space as swaps reassign its thermodynamic state.
+To get a constant-T (REMD) or fixed-λ (REST2) ensemble you **demux** — pick, per iteration, the
+walker occupying the target slot. Only slot 0 (T_min / λ=1) is a true Boltzmann sample at the
+reference condition, so it alone feeds the drift metrics and clustering. `analyze_remd` /
+`analyze_rest2` do this for you (see `analysis/multistate.py`, `demux_state`).
 
 ---
 
 ## Analysis
 
 `analyze(outdir)` (plain MD) / `analyze_remd(outdir)` / `analyze_rest2(outdir)` write
-`outdir/analysis/`: metric PNGs (300 dpi), `analysis_report.json`, `analysis_data.npz`, and an
-interactive `report.html`. All metrics are measured against the **reference pose**.
+`outdir/analysis/`: metric PNGs (300 dpi), a report JSON, a data `.npz`, and an interactive
+`report.html` (see **Output layout** for the bare-vs-prefixed names).
 
 Pass an `AnalysisConfig` to pin every parameter — it is serialized into the report, so a run is
 reproducible from its own JSON (don't rely on defaults in a campaign):

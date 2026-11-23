@@ -1,6 +1,11 @@
 # Requeue / preemption auto-resume (run-until-complete on short or preemptable nodes)
 
-**Status:** design outline, no code written. Reviewed by the architect agent. 2026-11-05.
+**Status:** 2026-11-19 — the `--requeue` (preemption) path is IMPLEMENTED (`lifecycle.py`:
+`run_or_resume` + `is_complete`; example `examples/MD_demo/requeue_demo.{py,sbatch}`). The
+short-walltime `afterany` self-resubmit tail and its crash-loop / forward-progress watchdog guards
+(items 3b, 4) were deliberately NOT built: pure `--requeue` does not loop on a crash (SLURM does not
+requeue a non-zero exit), so those guards only matter if/when the `afterany` path is added. See
+HISTORY 2026-11-19. Original design outline below. Reviewed by the architect agent. 2026-11-05.
 Verdict: **sound, needs changes.** Lower-risk and higher-value than the multi-GPU plan; do
 this first. The resume substrate already exists — this is driver glue only.
 

@@ -5,6 +5,23 @@ factual.
 
 ---
 
+## 2026-11-19 — requeue auto-resume (minimal path)
+
+- **New `lifecycle.py`**: `run_or_resume(cfg)` — the one idempotent entrypoint a (re)submitted SLURM job
+  calls (fresh → `prepare`+engine `run`; manifest present + incomplete → `resume`; complete → no-op). Plus
+  `is_complete(outdir)`, read-only + context-free (MD: deserialize newest ping-pong State XML time vs
+  `prod_steps`, no Context; REMD/REST2: `MultiStateReporter(open_mode="r").read_last_iteration()` vs
+  `n_iterations`); target from the manifest, progress from real artifacts (no side counter). Exported both.
+- **Example**: `examples/MD_demo/requeue_demo.{py,sbatch}` — `#SBATCH --requeue` + a body that always calls
+  `run_or_resume`. Partition is a placeholder to set per cluster.
+- **Scope decision** (vs plan `plans/2026-11-05_requeue_auto_resume.md`): built ONLY the `--requeue`
+  (preemption/node-failure) path. Dropped the `afterany` short-walltime tail and its crash-loop/
+  forward-progress watchdog guards — a non-progressing run under pure `--requeue` fails once (loudly), not
+  in a loop, because SLURM does not requeue a non-zero exit. Only the checkpoint-cadence caveat remains
+  (checkpoint interval ≪ node uptime), documented in the demo.
+- **Tests**: `is_complete` assertions added to two existing slow MD tests + new `test_run_or_resume_cycle`.
+  All 4 slow MD tests pass on CPU.
+
 ## 2026-11-03 — terminology: "design" → "reference" / "input structure"
 
 - **Repo-wide rename** of the "design" terminology that referred to the simulated input structure, so the

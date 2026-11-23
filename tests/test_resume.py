@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from openmm_pipelines import md, prepare, resume
+from openmm_pipelines import is_complete, md, prepare, resume, run_or_resume
 from openmm_pipelines.lib.run_layout import RunLayout, read_manifest, write_manifest
 from openmm_pipelines.md.config import MDConfig
 
@@ -134,7 +134,9 @@ def test_md_resume_to_planned_via_manifest(tmp_path):
     m["production_config"]["total_ns"] = 0.004
     mpath.write_text(json.dumps(m))
 
+    assert is_complete(out) is False, "target bumped past current progress -> not complete"
     resume(out)
+    assert is_complete(out) is True, "resume reached the (bumped) manifest target"
 
     extended_steps = round(0.004 * 1000 / cfg.dt_ps)
     assert _log_steps(out / "production" / "production.log")[-1] == extended_steps
@@ -146,10 +148,36 @@ def test_md_resume_guards_fail_loud(tmp_path):
     cfg = _md_cfg(out, total_ns=0.002)
     md.run(prepare(cfg), cfg)
 
+    assert is_complete(out) is True, "a finished run reads as complete"
     with pytest.raises(RuntimeError):  # already complete, no extend target
         resume(out)
     with pytest.raises(RuntimeError):  # extend target below what is already done
         resume(out, extend_to_ns=0.001)
+
+
+@pytest.mark.slow
+def test_run_or_resume_cycle(tmp_path):
+    """run_or_resume: fresh -> complete -> (manifest target bumped) continue -> no-op, as a requeue."""
+    out = tmp_path / "run"
+    cfg = _md_cfg(out, total_ns=0.002)
+
+    run_or_resume(cfg)  # no manifest -> fresh run
+    assert is_complete(out) is True
+
+    # Simulate a longer target recorded in the authoritative manifest (as an extended plan would).
+    mpath = out / "resume_manifest.json"
+    m = json.loads(mpath.read_text())
+    m["production_config"]["total_ns"] = 0.004
+    mpath.write_text(json.dumps(m))
+    assert is_complete(out) is False
+
+    run_or_resume(cfg)  # manifest present + incomplete -> resume to the (bumped) target
+    assert is_complete(out) is True
+    reached = _log_steps(out / "production" / "production.log")[-1]
+    assert reached == round(0.004 * 1000 / cfg.dt_ps)
+
+    run_or_resume(cfg)  # complete -> no-op (must NOT raise the already-at-target guard)
+    assert _log_steps(out / "production" / "production.log")[-1] == reached
 
 
 @pytest.mark.slow
